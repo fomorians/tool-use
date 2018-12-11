@@ -1,0 +1,50 @@
+import numpy as np
+import tensorflow as tf
+
+
+class Rollout:
+    def __init__(self, env, max_episode_steps):
+        self.env = env
+        self.max_episode_steps = max_episode_steps
+
+    def __call__(self, policy, episodes):
+        state_size = self.env.observation_space.shape[-1]
+        action_size = self.env.action_space.shape[-1]
+
+        states = np.zeros(
+            shape=(episodes, self.max_episode_steps, state_size),
+            dtype=np.float32)
+        actions = np.zeros(
+            shape=(episodes, self.max_episode_steps, action_size),
+            dtype=np.float32)
+        next_states = np.zeros(
+            shape=(episodes, self.max_episode_steps, state_size),
+            dtype=np.float32)
+        rewards = np.zeros(
+            shape=(episodes, self.max_episode_steps), dtype=np.float32)
+        weights = np.zeros(
+            shape=(episodes, self.max_episode_steps), dtype=np.float32)
+
+        for episode in range(episodes):
+            state = self.env.reset()
+
+            for step in range(self.max_episode_steps):
+                state = tf.convert_to_tensor(
+                    state[None, None, ...], dtype=np.float32)
+                action = policy(state)
+                action = action[0, 0].numpy()
+
+                next_state, reward, done, info = self.env.step(action)
+
+                states[episode, step] = state
+                actions[episode, step] = action
+                next_states[episode, step] = next_state
+                rewards[episode, step] = reward
+                weights[episode, step] = 1.0
+
+                if done:
+                    break
+
+                state = next_state
+
+        return states, actions, rewards, next_states, weights
