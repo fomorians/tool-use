@@ -15,19 +15,10 @@ from pybullet_envs.bullet.kuka import Kuka
 class KukaEnv(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
 
-    def __init__(self,
-                 urdfRoot=pybullet_data.getDataPath(),
-                 actionRepeat=1,
-                 render=False,
-                 maxSteps=1000):
-        self._timeStep = 1 / 240
-        self._urdfRoot = urdfRoot
-        self._actionRepeat = actionRepeat
-        self._observation = []
-        self._envStepCounter = 0
+    def __init__(self, render=False):
+        self._reward_height_threshold = 0.2
+        self._time_step = 1 / 240
         self._render = render
-        self._maxSteps = maxSteps
-        self._terminated = 0
 
         if self._render:
             cid = p.connect(p.SHARED_MEMORY)
@@ -42,51 +33,65 @@ class KukaEnv(gym.Env):
 
         observation_size = len(self._get_observation())
         observation_high = np.array([100] * observation_size)
-        action_high = np.array([0.005, 0.005, 0.005, 0.05, 0.3])
+        action_high = np.array([1] * 5)
 
-        self.action_space = spaces.Box(-action_high, action_high)
-        self.observation_space = spaces.Box(-observation_high,
-                                            observation_high)
-        self.viewer = None
+        self.observation_space = spaces.Box(
+            low=-observation_high, high=+observation_high)
+        self.action_space = spaces.Box(low=-action_high, high=action_high)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
         return [seed]
 
     def reset(self):
-        self._terminated = 0
-
         p.resetSimulation()
         p.setPhysicsEngineParameter(numSolverIterations=150)
-        p.setTimeStep(self._timeStep)
-        p.loadURDF(os.path.join(self._urdfRoot, 'plane.urdf'), [0, 0, -1])
+        p.setTimeStep(self._time_step)
 
-        p.loadURDF(
-            os.path.join(self._urdfRoot, 'table/table.urdf'), 0.5000000,
-            0.00000, -.820000, 0.000000, 0.000000, 0.0, 1.0)
+        urdf_root = pybullet_data.getDataPath()
+
+        plane_path = os.path.join(urdf_root, 'plane.urdf')
+        p.loadURDF(plane_path, [0, 0, -1])
+
+        table_path = os.path.join(urdf_root, 'table/table.urdf')
+        p.loadURDF(table_path, 0.5, 0.0, -0.82, 0.0, 0.0, 0.0, 1.0)
 
         xpos = 0.55 + 0.12 * random.random()
         ypos = 0 + 0.2 * random.random()
         ang = np.pi * 0.5 + np.pi * random.random()
         orn = p.getQuaternionFromEuler([0, 0, ang])
-        self.blockUid = p.loadURDF(
-            os.path.join(self._urdfRoot, 'block.urdf'), xpos, ypos, -0.15,
-            orn[0], orn[1], orn[2], orn[3])
+        block_path = os.path.join(urdf_root, 'block.urdf')
+        self._block_uid = p.loadURDF(block_path, xpos, ypos, -0.15, orn[0],
+                                     orn[1], orn[2], orn[3])
 
         p.setGravity(0, 0, -10)
-        self._kuka = Kuka(urdfRootPath=self._urdfRoot, timeStep=self._timeStep)
-        self._envStepCounter = 0
+
+        self._kuka = Kuka(urdfRootPath=urdf_root, timeStep=self._time_step)
+
         p.stepSimulation()
-        self._observation = self._get_observation()
-        return np.array(self._observation)
+
+        observation = self._get_observation()
+        return observation
 
     def _get_observation(self):
-        self._observation = self._kuka.getObservation()
+        observation = []
+
+        state = p.getLinkState(self._kuka.kukaUid, self._kuka.kukaGripperIndex)
+        pos = state[0]
+        orn = state[1]
+        euler = p.getEulerFromQuaternion(orn)
+
+        observation.extend(list(pos))
+
+        for angle in list(euler):
+            observation.append(np.cos(angle))
+            observation.append(np.sin(angle))
+
         gripper_state = p.getLinkState(self._kuka.kukaUid,
                                        self._kuka.kukaGripperIndex)
         gripper_pos = gripper_state[0]
         gripper_orn = gripper_state[1]
-        block_pos, block_orn = p.getBasePositionAndOrientation(self.blockUid)
+        block_pos, block_orn = p.getBasePositionAndOrientation(self._block_uid)
 
         inv_gripper_pos, inv_gripper_orn = p.invertTransform(
             gripper_pos, gripper_orn)
@@ -95,92 +100,54 @@ class KukaEnv(gym.Env):
             inv_gripper_pos, inv_gripper_orn, block_pos, block_orn)
         block_euler_in_gripper = p.getEulerFromQuaternion(block_orn_in_gripper)
 
-        block_pos_euler_in_gripper = [
-            block_pos_in_gripper[0], block_pos_in_gripper[1],
-            block_pos_in_gripper[2], block_euler_in_gripper[0],
-            block_euler_in_gripper[1], block_euler_in_gripper[2]
-        ]
+        for pos in block_pos_in_gripper:
+            observation.append(pos)
 
-        self._observation.extend(block_pos_euler_in_gripper)
-        return self._observation
+        for angle in block_euler_in_gripper:
+            observation.append(np.cos(angle))
+            observation.append(np.sin(angle))
+
+        return np.array(observation)
 
     def step(self, action):
-        for i in range(self._actionRepeat):
-            self._kuka.applyAction(action)
-            p.stepSimulation()
-            if self._termination():
-                break
-            self._envStepCounter += 1
+        action_scale = np.array([0.005, 0.005, 0.005, 0.05, 0.3])
+        self._kuka.applyAction(action * action_scale)
+        p.stepSimulation()
+
         if self._render:
-            time.sleep(self._timeStep)
-        self._observation = self._get_observation()
+            time.sleep(self._time_step)
 
-        done = self._termination()
-        npaction = np.array([action[3]])
-        actionCost = np.linalg.norm(npaction) * 10.
-        reward = self._reward() - actionCost
+        observation = self._get_observation()
+        done = self._get_done()
+        reward = self._reward()
+        info = {}
 
-        return np.array(self._observation), reward, done, {}
+        return observation, reward, done, info
 
-    def _termination(self):
-        state = p.getLinkState(self._kuka.kukaUid,
-                               self._kuka.kukaEndEffectorIndex)
-        actualEndEffectorPos = state[0]
+    def _get_done(self):
+        block_pos, block_orn = p.getBasePositionAndOrientation(self._block_uid)
+        done = False
 
-        if self._terminated or self._envStepCounter > self._maxSteps:
-            self._observation = self._get_observation()
-            return True
+        if block_pos[2] > self._reward_height_threshold:
+            done = True
 
-        maxDist = 0.005
-        closestPoints = p.getClosestPoints(self._kuka.trayUid,
-                                           self._kuka.kukaUid, maxDist)
-
-        if len(closestPoints):
-            self._terminated = 1
-
-            fingerAngle = 0.3
-            for i in range(100):
-                graspAction = [0, 0, 0.0001, 0, fingerAngle]
-                self._kuka.applyAction(graspAction)
-                p.stepSimulation()
-                fingerAngle = fingerAngle - (0.3 / 100)
-                if fingerAngle < 0:
-                    fingerAngle = 0
-
-            for i in range(1000):
-                graspAction = [0, 0, 0.001, 0, fingerAngle]
-                self._kuka.applyAction(graspAction)
-                p.stepSimulation()
-                block_pos, block_orn = p.getBasePositionAndOrientation(
-                    self.blockUid)
-
-                if block_pos[2] > 0.23:
-                    break
-
-                state = p.getLinkState(self._kuka.kukaUid,
-                                       self._kuka.kukaEndEffectorIndex)
-                actualEndEffectorPos = state[0]
-                if (actualEndEffectorPos[2] > 0.5):
-                    break
-
-            self._observation = self._get_observation()
-            return True
-        return False
+        return done
 
     def _reward(self):
-        # rewards is height of target object
-        block_pos, block_orn = p.getBasePositionAndOrientation(self.blockUid)
-        closestPoints = p.getClosestPoints(self.blockUid, self._kuka.kukaUid,
-                                           1000, -1,
-                                           self._kuka.kukaEndEffectorIndex)
+        block_pos, block_orn = p.getBasePositionAndOrientation(self._block_uid)
+        closest_points = p.getClosestPoints(self._block_uid,
+                                            self._kuka.kukaUid, 1000, -1,
+                                            self._kuka.kukaEndEffectorIndex)
 
-        reward = -1000
+        reward = 0
 
-        numPt = len(closestPoints)
-        if numPt > 0:
-            reward = -closestPoints[0][8] * 10
-        if block_pos[2] > 0.2:
-            reward = reward + 10000
+        if len(closest_points) > 0:
+            closest_dist = closest_points[0][8]
+            reward = -closest_dist / 100
+
+        if block_pos[2] > self._reward_height_threshold:
+            reward = 10
+
         return reward
 
     def __del__(self):

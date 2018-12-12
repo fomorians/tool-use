@@ -8,8 +8,8 @@ class Rollout:
         self.max_episode_steps = max_episode_steps
 
     def __call__(self, policy, episodes):
-        state_size = self.env.observation_space.shape[-1]
-        action_size = self.env.action_space.shape[-1]
+        state_size = self.env.observation_space.shape[0]
+        action_size = self.env.action_space.shape[0]
 
         states = np.zeros(
             shape=(episodes, self.max_episode_steps, state_size),
