@@ -19,10 +19,10 @@ from tool_use.rollout import Rollout
 class HyperParams:
     learning_rate = attr.ib(default=1e-3)
     grad_clipping = attr.ib(default=10.0)
-    batch_size = attr.ib(default=None)
+    batch_size = attr.ib(default=10)
     iters = attr.ib(default=10)
     epochs = attr.ib(default=10)
-    episodes = attr.ib(default=10)
+    episodes = attr.ib(default=100)
 
 
 def main():
@@ -93,8 +93,13 @@ def main():
     for it in trange(params.iters):
         states, actions, rewards, next_states, weights = rollout(
             exploration_strategy, episodes=params.episodes)
-        dataset = tf.data.Dataset.from_tensors((states, actions, rewards,
-                                                next_states, weights))
+        if params.batch_size is not None:
+            dataset = tf.data.Dataset.from_tensor_slices(
+                (states, actions, rewards, next_states, weights))
+            dataset = dataset.batch(params.batch_size)
+        else:
+            dataset = tf.data.Dataset.from_tensors((states, actions, rewards,
+                                                    next_states, weights))
         for states, actions, rewards, next_states, weights in dataset:
             for epoch in range(params.epochs):
                 grads_and_vars = agent.estimate_gradients(
