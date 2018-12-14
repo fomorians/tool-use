@@ -8,6 +8,7 @@ from gym.wrappers import TimeLimit
 
 from tool_use.env import KukaEnv
 from tool_use.models import Policy
+from tool_use.params import HyperParams
 from tool_use.rollout import Rollout
 
 
@@ -21,15 +22,17 @@ def main():
 
     tf.enable_eager_execution()
 
+    params = HyperParams()
+
     env = KukaEnv(render=args.render)
-    env = TimeLimit(env, max_episode_steps=1000)
+    env = TimeLimit(env, max_episode_steps=params.max_episode_steps)
 
     env.seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
     tf.set_random_seed(args.seed)
 
-    rollout = Rollout(env, max_episode_steps=1000)
+    rollout = Rollout(env, max_episode_steps=params.max_episode_steps)
 
     action_size = env.action_space.shape[0]
 

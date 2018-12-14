@@ -8,9 +8,9 @@ tensorflow = "*"
 gym = "*"
 pybullet = "*"
 trfl = {git = "git://github.com/deepmind/trfl.git"}
-pyoneer = {editable = true, path = "/Users/fomoro/Documents/pyoneer"}
 attrs = "*"
 tqdm = "*"
+pyoneer = {editable = true, path = "/Users/fomoro/Documents/pyoneer"}
 
 [dev-packages]
 jupyterlab = "*"
