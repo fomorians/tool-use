@@ -7,7 +7,7 @@ class Rollout:
         self.env = env
         self.max_episode_steps = max_episode_steps
 
-    def __call__(self, policy, episodes):
+    def __call__(self, policy, episodes, render=False):
         state_size = self.env.observation_space.shape[0]
         action_size = self.env.action_space.shape[0]
 
@@ -29,6 +29,9 @@ class Rollout:
             state = self.env.reset()
 
             for step in range(self.max_episode_steps):
+                if render:
+                    self.env.render()
+
                 state = tf.convert_to_tensor(
                     state[None, None, ...], dtype=np.float32)
                 action = policy(state)

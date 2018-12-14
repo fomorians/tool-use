@@ -39,7 +39,7 @@ class Normalizer(tf.keras.Model):
                 tf.greater(self.count, 1),
                 self.mean + (mean_deltas / tf.to_float(self.count)),
                 inputs[0, 0])
-            new_max_norm = tf.where(
+            new_max = tf.where(
                 tf.greater(inputs_max, self.max), inputs_max, self.max)
 
             var_deltas = (inputs - self.mean[None, None, ...]) * (
@@ -48,7 +48,7 @@ class Normalizer(tf.keras.Model):
 
             self.mean.assign(new_mean)
             self.var_sum.assign(new_var_sum)
-            self.max.assign(new_max_norm)
+            self.max.assign(new_max)
 
         if self.center:
             inputs = inputs - self.mean[None, None, ...]

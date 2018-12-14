@@ -142,7 +142,7 @@ class KukaEnv(gym.Env):
         reward = 0
 
         if len(closest_points) > 0:
-            closest_dist = closest_points[0][8]
+            closest_dist = np.square(closest_points[0][8])
             reward = -closest_dist / 10
 
         if block_pos[2] > self._reward_height_threshold:

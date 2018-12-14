@@ -9,18 +9,19 @@ class StateModel(tf.keras.Model):
         super(StateModel, self).__init__(**kwargs)
 
         kernel_initializer = tf.initializers.variance_scaling(scale=2.0)
+        logits_initializer = tf.initializers.variance_scaling(scale=1.0)
 
         self.bn = tf.keras.layers.BatchNormalization()
         self.dense1 = tf.keras.layers.Dense(
-            units=64,
+            units=128,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense2 = tf.keras.layers.Dense(
-            units=32,
+            units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense_logits = tf.keras.layers.Dense(
-            units=10, activation=None, kernel_initializer=kernel_initializer)
+            units=32, activation=None, kernel_initializer=logits_initializer)
 
     def call(self, inputs, training=None):
         inputs = self.bn(inputs)
@@ -38,11 +39,11 @@ class Policy(tf.keras.Model):
 
         self.bn = tf.keras.layers.BatchNormalization()
         self.dense1 = tf.keras.layers.Dense(
-            units=64,
+            units=128,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense2 = tf.keras.layers.Dense(
-            units=32,
+            units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense_logits = tf.keras.layers.Dense(
@@ -71,11 +72,11 @@ class Value(tf.keras.Model):
 
         self.bn = tf.keras.layers.BatchNormalization()
         self.dense1 = tf.keras.layers.Dense(
-            units=64,
+            units=128,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense2 = tf.keras.layers.Dense(
-            units=32,
+            units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense_logits = tf.keras.layers.Dense(

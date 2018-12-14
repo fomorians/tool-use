@@ -8,6 +8,7 @@ import tensorflow as tf
 import pyoneer.rl as pyrl
 
 from tqdm import trange
+from gym.envs.classic_control import PendulumEnv
 from gym.wrappers import TimeLimit
 
 from tool_use.env import KukaEnv
@@ -36,10 +37,14 @@ def main():
     args = parser.parse_args()
     print(args)
 
+    params = HyperParams()
+    print(params)
+
     tf.enable_eager_execution()
 
-    env = KukaEnv(render=args.render)
-    env = TimeLimit(env, max_episode_steps=1000)
+    env = PendulumEnv()
+    # env = KukaEnv(render=args.render)
+    env = TimeLimit(env, max_episode_steps=params.max_episode_steps)
 
     env.seed(args.seed)
     random.seed(args.seed)
@@ -49,9 +54,6 @@ def main():
     summary_writer = tf.contrib.summary.create_file_writer(
         args.job_dir, max_queue=1, flush_millis=1000)
     summary_writer.set_as_default()
-
-    params = HyperParams()
-    print(params)
 
     rollout = Rollout(env, max_episode_steps=params.max_episode_steps)
 
@@ -72,9 +74,9 @@ def main():
         learning_rate=params.learning_rate)
 
     extrinsic_reward_normalizer = Normalizer(
-        center=False, scale=True, scale_by_max=False)
+        center=False, scale=False, scale_by_max=True)
     intrinsic_reward_normalizer = Normalizer(
-        center=False, scale=True, scale_by_max=False)
+        center=False, scale=False, scale_by_max=True)
 
     checkpoint = tf.train.Checkpoint(
         global_step=global_step,
@@ -108,7 +110,8 @@ def main():
         optimizer=optimizer)
 
     for it in trange(params.iters):
-        transitions = rollout(exploration_strategy, episodes=params.episodes)
+        transitions = rollout(
+            exploration_strategy, episodes=params.episodes, render=args.render)
 
         dataset = create_dataset(
             transitions, batch_size=params.batch_size, shuffle=True)
@@ -144,11 +147,11 @@ def main():
                 axis=-1)
 
             extrinsic_rewards_norm = extrinsic_reward_normalizer(
-                extrinsic_rewards, training=True)
+                extrinsic_rewards, training=True) / params.max_episode_steps
             intrinsic_rewards_norm = intrinsic_reward_normalizer(
-                intrinsic_rewards, training=True)
+                intrinsic_rewards, training=True) / params.max_episode_steps
             rewards = tf.stop_gradient(extrinsic_rewards_norm +
-                                       intrinsic_rewards_norm)
+                                       intrinsic_rewards_norm) / 2
 
             for epoch in range(params.epochs):
                 grads_and_vars = agent.estimate_gradients(
@@ -178,22 +181,24 @@ def main():
                                               grads_clipped_norm)
 
             episodic_extrinsic_rewards = tf.reduce_mean(
-                tf.reduce_sum(extrinsic_rewards, axis=-1))
+                tf.reduce_sum(extrinsic_rewards_norm, axis=-1))
             episodic_intrinsic_rewards = tf.reduce_mean(
-                tf.reduce_sum(intrinsic_rewards, axis=-1))
+                tf.reduce_sum(intrinsic_rewards_norm, axis=-1))
+            episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
 
             with tf.contrib.summary.always_record_summaries():
                 tf.contrib.summary.scalar('extrinsic_rewards/train',
                                           episodic_extrinsic_rewards)
                 tf.contrib.summary.scalar('intrinsic_rewards/train',
                                           episodic_intrinsic_rewards)
+                tf.contrib.summary.scalar('rewards/train', episodic_rewards)
 
         trfl.update_target_variables(
             source_variables=policy.trainable_variables,
             target_variables=behavioral_policy.trainable_variables)
 
         states, actions, extrinsic_rewards, next_states, weights = rollout(
-            inference_strategy, episodes=params.episodes)
+            inference_strategy, episodes=params.episodes, render=args.render)
         episodic_extrinsic_rewards = tf.reduce_mean(
             tf.reduce_sum(extrinsic_rewards, axis=-1))
         with tf.contrib.summary.always_record_summaries():
