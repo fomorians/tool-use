@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
-gcloud compute scp --recurse . tool-use:~/tool_use
-gcloud compute scp --recurse ~/Documents/pyoneer tool-use:~/pyoneer
-gcloud compute scp --recurse tool-use:~/jobs ~/jobs/tool_use/
+INSTANCE_NAME=$1
+gcloud compute scp --recurse . $INSTANCE_NAME:~/tool_use
+gcloud compute scp --recurse ~/Documents/pyoneer $INSTANCE_NAME:~/pyoneer
+gcloud compute scp --recurse $INSTANCE_NAME:~/jobs ~/jobs/tool_use/
