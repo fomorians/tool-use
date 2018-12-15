@@ -53,7 +53,8 @@ class Normalizer(tf.keras.Model):
 
     def inverse(self, inputs):
         if self.scale:
-            inputs = inputs * self.std[None, None, ...]
+            inputs = pynr.math.safe_divide_inverse(inputs,
+                                                   self.std[None, None, ...])
 
         if self.center:
             inputs = inputs + self.mean[None, None, ...]

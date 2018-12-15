@@ -20,7 +20,7 @@ from tool_use.rollout import Rollout
 from tool_use.normalizer import Normalizer
 
 
-def create_dataset(tensors, batch_size=None, shuffle=False, buffer_size=10000):
+def create_dataset(tensors, batch_size=None, shuffle=True, buffer_size=10000):
     if batch_size is not None:
         dataset = tf.data.Dataset.from_tensor_slices(tensors)
         if shuffle:
@@ -37,11 +37,13 @@ class PolicyWrapper:
         self.states_normalizer = states_normalizer
         self.actions_normalizer = actions_normalizer
 
-    def __call__(self, states):
-        states_norm = self.states_normalizer(states)
-        actions_norm = self.policy(states_norm)
-        actions = self.actions_normalizer.inverse(actions_norm)
-        return actions
+    def __call__(self, state):
+        state = tf.convert_to_tensor(state[None, None, ...], dtype=np.float32)
+        state_norm = self.states_normalizer(state)
+        action_norm = self.policy(state_norm)
+        action = self.actions_normalizer.inverse(action_norm)
+        action = action[0, 0].numpy()
+        return action
 
 
 def main():
@@ -78,7 +80,7 @@ def main():
     optimizer = tf.train.AdamOptimizer(learning_rate=params.learning_rate)
 
     states_normalizer = Normalizer(shape=[3], center=True, scale=True)
-    actions_normalizer = Normalizer(shape=[1], center=True, scale=True)
+    actions_normalizer = Normalizer(shape=[1], center=False, scale=False)
     rewards_normalizer = Normalizer(center=False, scale=True)
 
     checkpoint = tf.train.Checkpoint(
@@ -87,6 +89,8 @@ def main():
         behavioral_policy=behavioral_policy,
         policy=policy,
         value=value,
+        states_normalizer=states_normalizer,
+        actions_normalizer=actions_normalizer,
         rewards_normalizer=rewards_normalizer)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     if checkpoint_path is not None:
@@ -113,38 +117,55 @@ def main():
         source_variables=policy.variables,
         target_variables=behavioral_policy.variables)
 
+    states, actions, rewards, next_states, weights = rollout(
+        exploration_wrapper, episodes=params.episodes, render=False)
+    states_normalizer(states, training=True)
+    actions_normalizer(actions, training=True)
+    rewards_normalizer(rewards, training=True)
+
     for it in trange(params.iters):
-        transitions = rollout(exploration_wrapper, episodes=params.episodes)
+        states, actions, rewards, next_states, weights = rollout(
+            exploration_wrapper, episodes=params.episodes, render=False)
+
+        episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+
+        with tf.contrib.summary.always_record_summaries():
+            tf.contrib.summary.scalar('episodic_rewards/train',
+                                      episodic_rewards)
+            tf.contrib.summary.histogram('actions/train', actions)
+            tf.contrib.summary.histogram('rewards/train', rewards)
 
         dataset = create_dataset(
-            transitions, batch_size=params.batch_size, shuffle=True)
+            tensors=(states, actions, rewards, next_states, weights),
+            batch_size=params.batch_size)
 
-        for (states, actions, rewards, next_states, weights) in dataset:
-            states_norm = states_normalizer(states, training=True)
-            actions_norm = actions_normalizer(actions, training=True)
-            rewards_norm = rewards_normalizer(rewards, training=True)
+        for epoch in range(params.epochs):
+            for (states, actions, rewards, next_states, weights) in dataset:
+                states_norm = states_normalizer(states, training=True)
+                actions_norm = actions_normalizer(actions, training=True)
+                rewards_norm = rewards_normalizer(rewards, training=True)
 
-            values = value(states_norm, training=False)
+                values = value(states_norm, training=False)
 
-            returns = targets.compute_returns(
-                rewards_norm,
-                discount_factor=params.discount_factor,
-                weights=weights)
-            advantages = targets.compute_advantages(
-                rewards_norm,
-                values,
-                discount_factor=params.discount_factor,
-                lambda_factor=params.lambda_factor,
-                weights=weights,
-                normalize=True)
+                advantages = targets.compute_advantages(
+                    rewards_norm,
+                    values,
+                    discount_factor=params.discount_factor,
+                    lambda_factor=params.lambda_factor,
+                    weights=weights,
+                    normalize=True)
+                returns = targets.compute_returns(
+                    rewards_norm,
+                    discount_factor=params.discount_factor,
+                    weights=weights)
 
-            behavioral_policy_dist = behavioral_policy(
-                states_norm, training=True)
+                behavioral_policy_dist = behavioral_policy(
+                    states_norm, training=False)
 
-            log_probs_old = behavioral_policy_dist.log_prob(actions_norm)
-            log_probs_old = tf.check_numerics(log_probs_old, 'log_probs_old')
+                log_probs_old = behavioral_policy_dist.log_prob(actions_norm)
+                log_probs_old = tf.check_numerics(log_probs_old,
+                                                  'log_probs_old')
 
-            for epoch in range(params.epochs):
                 with tf.GradientTape() as tape:
                     policy_dist = policy(states_norm, training=True)
 
@@ -198,11 +219,6 @@ def main():
                     tf.contrib.summary.scalar('grads_norm/clipped',
                                               grads_clipped_norm)
 
-            episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
-
-            with tf.contrib.summary.always_record_summaries():
-                tf.contrib.summary.scalar('rewards/train', episodic_rewards)
-
         trfl.update_target_variables(
             source_variables=policy.trainable_variables,
             target_variables=behavioral_policy.trainable_variables)
@@ -211,7 +227,10 @@ def main():
             inference_wrapper, episodes=params.episodes, render=args.render)
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
         with tf.contrib.summary.always_record_summaries():
-            tf.contrib.summary.scalar('rewards/eval', episodic_rewards)
+            tf.contrib.summary.scalar('episodic_rewards/eval',
+                                      episodic_rewards)
+            tf.contrib.summary.histogram('actions/eval', actions)
+            tf.contrib.summary.histogram('rewards/eval', rewards)
 
         checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
         checkpoint.save(file_prefix=checkpoint_prefix)
