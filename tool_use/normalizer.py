@@ -4,12 +4,11 @@ import tensorflow.contrib.eager as tfe
 
 
 class Normalizer(tf.keras.Model):
-    def __init__(self, shape=None, center=True, scale=True, scale_by_max=True):
+    def __init__(self, shape=None, center=True, scale=True):
         super(Normalizer, self).__init__()
 
         self.center = center
         self.scale = scale
-        self.scale_by_max = scale_by_max
 
         if shape is None:
             shape = []
@@ -19,8 +18,6 @@ class Normalizer(tf.keras.Model):
             tf.zeros(shape=shape, dtype=tf.float32), trainable=False)
         self.var_sum = tfe.Variable(
             tf.zeros(shape=shape, dtype=tf.float32), trainable=False)
-        self.max = tfe.Variable(
-            tf.zeros(shape=shape, dtype=tf.float32), trainable=False)
 
     @property
     def std(self):
@@ -28,8 +25,6 @@ class Normalizer(tf.keras.Model):
             tf.maximum(self.var_sum / tf.to_float(self.count - 1), 0))
 
     def __call__(self, inputs, training=False):
-        inputs_max = tf.reduce_max(tf.abs(inputs), axis=(0, 1))
-
         if training:
             self.count.assign_add(tf.reduce_prod(inputs.shape[:2]))
 
@@ -39,8 +34,6 @@ class Normalizer(tf.keras.Model):
                 tf.greater(self.count, 1),
                 self.mean + (mean_deltas / tf.to_float(self.count)),
                 inputs[0, 0])
-            new_max = tf.where(
-                tf.greater(inputs_max, self.max), inputs_max, self.max)
 
             var_deltas = (inputs - self.mean[None, None, ...]) * (
                 inputs - new_mean[None, None, ...])
@@ -48,7 +41,6 @@ class Normalizer(tf.keras.Model):
 
             self.mean.assign(new_mean)
             self.var_sum.assign(new_var_sum)
-            self.max.assign(new_max)
 
         if self.center:
             inputs = inputs - self.mean[None, None, ...]
@@ -56,8 +48,15 @@ class Normalizer(tf.keras.Model):
         if self.scale:
             inputs = pynr.math.safe_divide(inputs, self.std[None, None, ...])
 
-        if self.scale_by_max:
-            inputs = inputs / self.max
+        inputs = tf.check_numerics(inputs, 'inputs')
+        return inputs
 
-        inputs = tf.check_numerics(inputs, 'inputs (post-normalization)')
+    def inverse(self, inputs):
+        if self.scale:
+            inputs = inputs * self.std[None, None, ...]
+
+        if self.center:
+            inputs = inputs + self.mean[None, None, ...]
+
+        inputs = tf.check_numerics(inputs, 'inputs')
         return inputs

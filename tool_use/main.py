@@ -4,15 +4,17 @@ import random
 import argparse
 import numpy as np
 import tensorflow as tf
+import tensorflow_probability as tfp
 
 import pyoneer.rl as pyrl
 
 from tqdm import trange
 from gym.envs.classic_control import PendulumEnv
-from gym.wrappers import TimeLimit
 
+from tool_use import losses
+from tool_use import targets
 from tool_use.env import KukaEnv
-from tool_use.models import Policy, Value, StateModel
+from tool_use.models import Policy, Value
 from tool_use.params import HyperParams
 from tool_use.rollout import Rollout
 from tool_use.normalizer import Normalizer
@@ -27,6 +29,19 @@ def create_dataset(tensors, batch_size=None, shuffle=False, buffer_size=10000):
     else:
         dataset = tf.data.Dataset.from_tensors(tensors)
     return dataset
+
+
+class PolicyWrapper:
+    def __init__(self, policy, states_normalizer, actions_normalizer):
+        self.policy = policy
+        self.states_normalizer = states_normalizer
+        self.actions_normalizer = actions_normalizer
+
+    def __call__(self, states):
+        states_norm = self.states_normalizer(states)
+        actions_norm = self.policy(states_norm)
+        actions = self.actions_normalizer.inverse(actions_norm)
+        return actions
 
 
 def main():
@@ -44,166 +59,159 @@ def main():
 
     env = PendulumEnv()
     # env = KukaEnv(render=args.render)
-    env = TimeLimit(env, max_episode_steps=params.max_episode_steps)
 
     env.seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
     tf.set_random_seed(args.seed)
 
-    summary_writer = tf.contrib.summary.create_file_writer(
-        args.job_dir, max_queue=1, flush_millis=1000)
-    summary_writer.set_as_default()
-
     rollout = Rollout(env, max_episode_steps=params.max_episode_steps)
 
+    observation_size = env.observation_space.shape[0]
     action_size = env.action_space.shape[0]
 
-    behavioral_policy = Policy(action_size=action_size)
-    policy = Policy(action_size=action_size)
+    behavioral_policy = Policy(action_size=action_size, scale=params.scale)
+    policy = Policy(action_size=action_size, scale=params.scale)
     value = Value()
-    state_model = StateModel()
-    state_model_rand = StateModel()
-
-    exploration_strategy = pyrl.strategies.SampleStrategy(behavioral_policy)
-    inference_strategy = pyrl.strategies.ModeStrategy(behavioral_policy)
 
     global_step = tf.train.create_global_step()
     optimizer = tf.train.AdamOptimizer(learning_rate=params.learning_rate)
-    state_optimizer = tf.train.AdamOptimizer(
-        learning_rate=params.learning_rate)
 
-    extrinsic_reward_normalizer = Normalizer(
-        center=False, scale=False, scale_by_max=True)
-    intrinsic_reward_normalizer = Normalizer(
-        center=False, scale=False, scale_by_max=True)
+    states_normalizer = Normalizer(shape=[3], center=True, scale=True)
+    actions_normalizer = Normalizer(shape=[1], center=True, scale=True)
+    rewards_normalizer = Normalizer(center=False, scale=True)
 
     checkpoint = tf.train.Checkpoint(
         global_step=global_step,
         optimizer=optimizer,
-        state_optimizer=state_optimizer,
         behavioral_policy=behavioral_policy,
         policy=policy,
         value=value,
-        state_model=state_model,
-        state_model_rand=state_model_rand,
-        extrinsic_reward_normalizer=extrinsic_reward_normalizer,
-        intrinsic_reward_normalizer=intrinsic_reward_normalizer)
+        rewards_normalizer=rewards_normalizer)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     if checkpoint_path is not None:
         checkpoint.restore(checkpoint_path)
 
-    state_size = env.observation_space.shape[0]
-    mock_states = tf.zeros(shape=(1, 1, state_size), dtype=np.float32)
+    summary_writer = tf.contrib.summary.create_file_writer(
+        args.job_dir, max_queue=1, flush_millis=1000)
+    summary_writer.set_as_default()
+
+    exploration_strategy = pyrl.strategies.SampleStrategy(behavioral_policy)
+    inference_strategy = pyrl.strategies.ModeStrategy(behavioral_policy)
+
+    exploration_wrapper = PolicyWrapper(exploration_strategy,
+                                        states_normalizer, actions_normalizer)
+    inference_wrapper = PolicyWrapper(inference_strategy, states_normalizer,
+                                      actions_normalizer)
+
+    # prime models
+    mock_states = tf.zeros(shape=(1, 1, observation_size), dtype=np.float32)
     behavioral_policy(mock_states)
     policy(mock_states)
-    value(mock_states)
 
     trfl.update_target_variables(
         source_variables=policy.variables,
         target_variables=behavioral_policy.variables)
 
-    agent = pyrl.agents.ProximalPolicyOptimizationAgent(
-        policy=policy,
-        behavioral_policy=behavioral_policy,
-        value=value,
-        optimizer=optimizer)
-
     for it in trange(params.iters):
-        transitions = rollout(
-            exploration_strategy, episodes=params.episodes, render=args.render)
+        transitions = rollout(exploration_wrapper, episodes=params.episodes)
 
         dataset = create_dataset(
             transitions, batch_size=params.batch_size, shuffle=True)
 
-        for (states, actions, extrinsic_rewards, next_states,
-             weights) in dataset:
-            state_model_rand_pred = state_model_rand(states)
+        for (states, actions, rewards, next_states, weights) in dataset:
+            states_norm = states_normalizer(states, training=True)
+            actions_norm = actions_normalizer(actions, training=True)
+            rewards_norm = rewards_normalizer(rewards, training=True)
 
-            with tf.GradientTape() as tape:
-                state_model_pred = state_model(states)
-                loss = tf.losses.mean_squared_error(
-                    predictions=state_model_pred,
-                    labels=tf.stop_gradient(state_model_rand_pred),
-                    weights=weights[..., None])
+            values = value(states_norm, training=False)
 
-            grads = tape.gradient(loss, state_model.trainable_variables)
-            grads_clipped, grads_norm = tf.clip_by_global_norm(
-                grads, params.grad_clipping)
-            grads_clipped_norm = tf.global_norm(grads_clipped)
-            grads_and_vars = zip(grads_clipped,
-                                 state_model.trainable_variables)
-            state_optimizer.apply_gradients(
-                grads_and_vars, global_step=global_step)
+            returns = targets.compute_returns(
+                rewards_norm,
+                discount_factor=params.discount_factor,
+                weights=weights)
+            advantages = targets.compute_advantages(
+                rewards_norm,
+                values,
+                discount_factor=params.discount_factor,
+                lambda_factor=params.lambda_factor,
+                weights=weights,
+                normalize=True)
 
-            with tf.contrib.summary.always_record_summaries():
-                tf.contrib.summary.scalar('losses/state_model', loss)
-                tf.contrib.summary.scalar('grads_norm/state_model', grads_norm)
-                tf.contrib.summary.scalar('grads_norm/state_model/clipped',
-                                          grads_clipped_norm)
+            behavioral_policy_dist = behavioral_policy(
+                states_norm, training=True)
 
-            intrinsic_rewards = tf.reduce_sum(
-                tf.squared_difference(state_model_pred, state_model_rand_pred),
-                axis=-1)
-
-            extrinsic_rewards_norm = extrinsic_reward_normalizer(
-                extrinsic_rewards, training=True) / params.max_episode_steps
-            intrinsic_rewards_norm = intrinsic_reward_normalizer(
-                intrinsic_rewards, training=True) / params.max_episode_steps
-            rewards = tf.stop_gradient(extrinsic_rewards_norm +
-                                       intrinsic_rewards_norm) / 2
+            log_probs_old = behavioral_policy_dist.log_prob(actions_norm)
+            log_probs_old = tf.check_numerics(log_probs_old, 'log_probs_old')
 
             for epoch in range(params.epochs):
-                grads_and_vars = agent.estimate_gradients(
-                    states=states,
-                    actions=actions,
-                    rewards=rewards,
-                    weights=weights,
-                    global_step=global_step,
-                    decay=params.decay,
-                    lambda_=params.lambda_)
-                grads, _ = zip(*grads_and_vars)
+                with tf.GradientTape() as tape:
+                    policy_dist = policy(states_norm, training=True)
+
+                    log_probs = policy_dist.log_prob(actions_norm)
+                    log_probs = tf.check_numerics(log_probs, 'log_probs')
+
+                    entropy = policy_dist.entropy()
+                    entropy = tf.check_numerics(entropy, 'entropy')
+
+                    values = value(states_norm, training=True)
+
+                    # losses
+                    policy_loss = losses.policy_ratio_loss(
+                        log_probs=log_probs,
+                        log_probs_old=tf.stop_gradient(log_probs_old),
+                        advantages=advantages,
+                        weights=weights,
+                        epsilon_clipping=params.epsilon_clipping)
+                    value_loss = params.value_coef * (
+                        tf.losses.mean_squared_error(
+                            predictions=values,
+                            labels=returns,
+                            weights=weights))
+                    entropy_loss = -params.entropy_coef * (
+                        tf.losses.compute_weighted_loss(
+                            losses=entropy, weights=weights))
+                    loss = policy_loss + value_loss + entropy_loss
+
+                trainable_variables = (
+                    policy.trainable_variables + value.trainable_variables)
+                grads = tape.gradient(loss, trainable_variables)
                 grads_clipped, grads_norm = tf.clip_by_global_norm(
                     grads, params.grad_clipping)
                 grads_clipped_norm = tf.global_norm(grads_clipped)
-                grads_and_vars = zip(grads_clipped, agent.trainable_variables)
+                grads_and_vars = zip(grads_clipped, trainable_variables)
                 optimizer.apply_gradients(
                     grads_and_vars, global_step=global_step)
 
+                kl = tfp.distributions.kl_divergence(policy_dist,
+                                                     behavioral_policy_dist)
+
                 with tf.contrib.summary.always_record_summaries():
-                    tf.contrib.summary.scalar('losses/policy_gradient',
-                                              agent.policy_gradient_loss)
-                    tf.contrib.summary.scalar(
-                        'losses/entropy', agent.policy_gradient_entropy_loss)
-                    tf.contrib.summary.scalar('losses/value', agent.value_loss)
-                    tf.contrib.summary.scalar('grads_norm/agent', grads_norm)
-                    tf.contrib.summary.scalar('grads_norm/agent/clipped',
+                    tf.contrib.summary.scalar('scale_diag', policy.scale_diag)
+                    tf.contrib.summary.scalar('entropy', entropy)
+                    tf.contrib.summary.scalar('kl', kl)
+                    tf.contrib.summary.scalar('losses/policy_loss',
+                                              policy_loss)
+                    tf.contrib.summary.scalar('losses/entropy', entropy_loss)
+                    tf.contrib.summary.scalar('losses/value_loss', value_loss)
+                    tf.contrib.summary.scalar('grads_norm', grads_norm)
+                    tf.contrib.summary.scalar('grads_norm/clipped',
                                               grads_clipped_norm)
 
-            episodic_extrinsic_rewards = tf.reduce_mean(
-                tf.reduce_sum(extrinsic_rewards_norm, axis=-1))
-            episodic_intrinsic_rewards = tf.reduce_mean(
-                tf.reduce_sum(intrinsic_rewards_norm, axis=-1))
             episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
 
             with tf.contrib.summary.always_record_summaries():
-                tf.contrib.summary.scalar('extrinsic_rewards/train',
-                                          episodic_extrinsic_rewards)
-                tf.contrib.summary.scalar('intrinsic_rewards/train',
-                                          episodic_intrinsic_rewards)
                 tf.contrib.summary.scalar('rewards/train', episodic_rewards)
 
         trfl.update_target_variables(
             source_variables=policy.trainable_variables,
             target_variables=behavioral_policy.trainable_variables)
 
-        states, actions, extrinsic_rewards, next_states, weights = rollout(
-            inference_strategy, episodes=params.episodes, render=args.render)
-        episodic_extrinsic_rewards = tf.reduce_mean(
-            tf.reduce_sum(extrinsic_rewards, axis=-1))
+        states, actions, rewards, next_states, weights = rollout(
+            inference_wrapper, episodes=params.episodes, render=args.render)
+        episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
         with tf.contrib.summary.always_record_summaries():
-            tf.contrib.summary.scalar('extrinsic_rewards/eval',
-                                      episodic_extrinsic_rewards)
+            tf.contrib.summary.scalar('rewards/eval', episodic_rewards)
 
         checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
         checkpoint.save(file_prefix=checkpoint_prefix)
