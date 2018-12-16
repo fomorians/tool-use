@@ -1,5 +1,4 @@
 import numpy as np
-import tensorflow as tf
 
 
 class Rollout:
@@ -32,11 +31,8 @@ class Rollout:
                 if render:
                     self.env.render()
 
-                state_batch = tf.convert_to_tensor(
-                    state[None, None, ...], dtype=np.float32)
-                action_batch = policy(state_batch)
-                action = action_batch[0, 0].numpy()
-
+                reset_state = (step == 0)
+                action = policy(state, reset_state=reset_state)
                 next_state, reward, done, info = self.env.step(action)
 
                 states[episode, step] = state

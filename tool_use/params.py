@@ -7,10 +7,10 @@ class HyperParams:
     iters = attr.ib(default=30)
     episodes = attr.ib(default=10)
     epochs = attr.ib(default=10)
-    max_episode_steps = attr.ib(default=200)
+    max_episode_steps = attr.ib(default=500)
 
     # losses
-    value_coef = attr.ib(default=1e-3)
+    value_coef = attr.ib(default=1e-4)
     entropy_coef = attr.ib(default=0.05)
 
     # optimization

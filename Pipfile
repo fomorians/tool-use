@@ -11,6 +11,7 @@ trfl = {git = "git://github.com/deepmind/trfl.git"}
 attrs = "*"
 tqdm = "*"
 pyoneer = {editable = true, path = "/Users/fomoro/Documents/pyoneer"}
+jupyterlab = "*"
 
 [dev-packages]
 jupyterlab = "*"

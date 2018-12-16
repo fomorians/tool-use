@@ -9,35 +9,49 @@ import tensorflow_probability as tfp
 import pyoneer.rl as pyrl
 
 from tqdm import trange
-from gym.envs.classic_control import PendulumEnv
+# from gym.envs.classic_control import PendulumEnv
 
 from tool_use import losses
 from tool_use import targets
-# from tool_use.env import KukaEnv
+from tool_use.env import KukaEnv
 from tool_use.models import Policy, Value
 from tool_use.params import HyperParams
-from tool_use.rollout import Rollout
+from tool_use.batch_env import BatchEnv
 from tool_use.normalizer import Normalizer
+from tool_use.parallel_rollout import ParallelRollout
+
+
+class PolicyWrapper:
+    def __init__(self, policy):
+        self.policy = policy
+
+    def __call__(self, state, *args, **kwargs):
+        state = tf.convert_to_tensor(state, dtype=np.float32)
+        state_batch = tf.expand_dims(state, axis=1)
+        action_batch = self.policy(state_batch, *args, **kwargs)
+        action = tf.squeeze(action_batch, axis=1)
+        action = action.numpy()
+        return action
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
-    parser.add_argument('--render', action='store_true')
-    parser.add_argument('--seed', default=67)
+    parser.add_argument('--seed', default=42)
     args = parser.parse_args()
     print(args)
+
+    # params
+    params = HyperParams()
+    print(params)
 
     # eager
     tf.enable_eager_execution()
 
     # environment
-    env = PendulumEnv()
-    # env = KukaEnv(render=args.render)
-
-    # params
-    params = HyperParams()
-    print(params)
+    # env = PendulumEnv()
+    # env = KukaEnv()
+    env = BatchEnv(KukaEnv, size=params.episodes, blocking=False)
 
     # seeding
     env.seed(args.seed)
@@ -60,7 +74,7 @@ def main():
         scale=params.scale)
     value = Value(observation_space=env.observation_space)
 
-    # rewards
+    # normalization
     rewards_normalizer = Normalizer(shape=(), center=False, scale=True)
 
     # checkpoints
@@ -80,17 +94,20 @@ def main():
     summary_writer.set_as_default()
 
     # rollouts
-    rollout = Rollout(env, max_episode_steps=params.max_episode_steps)
+    rollout = ParallelRollout(env, max_episode_steps=params.max_episode_steps)
 
     # strategies
     exploration_strategy = pyrl.strategies.SampleStrategy(policy)
     inference_strategy = pyrl.strategies.ModeStrategy(policy)
 
+    exploration_strategy = PolicyWrapper(exploration_strategy)
+    inference_strategy = PolicyWrapper(inference_strategy)
+
     # prime models
     mock_states = tf.zeros(
         shape=(1, 1, env.observation_space.shape[0]), dtype=np.float32)
-    policy(mock_states)
-    policy_anchor(mock_states)
+    policy(mock_states, reset_state=True)
+    policy_anchor(mock_states, reset_state=True)
 
     # sync variables
     trfl.update_target_variables(
@@ -99,8 +116,7 @@ def main():
 
     for it in trange(params.iters):
         # training
-        transitions = rollout(
-            exploration_strategy, episodes=params.episodes, render=False)
+        transitions = rollout(exploration_strategy)
 
         dataset = tf.data.Dataset.from_tensors(transitions)
 
@@ -122,7 +138,7 @@ def main():
                 weights=weights,
                 normalize=True)
 
-            policy_anchor_dist = policy_anchor(states)
+            policy_anchor_dist = policy_anchor(states, reset_state=True)
 
             log_probs_anchor = policy_anchor_dist.log_prob(actions)
             log_probs_anchor = tf.check_numerics(log_probs_anchor,
@@ -145,7 +161,8 @@ def main():
 
             for epoch in range(params.epochs):
                 with tf.GradientTape() as tape:
-                    policy_dist = policy(states, training=True)
+                    policy_dist = policy(
+                        states, training=True, reset_state=True)
 
                     log_probs = policy_dist.log_prob(actions)
                     log_probs = tf.check_numerics(log_probs, 'log_probs')
@@ -206,7 +223,7 @@ def main():
 
         # evaluation
         states, actions, rewards, next_states, weights = rollout(
-            inference_strategy, episodes=params.episodes, render=args.render)
+            inference_strategy)
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
 
         with tf.contrib.summary.always_record_summaries():
