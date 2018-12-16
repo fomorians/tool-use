@@ -4,14 +4,11 @@ import tensorflow.contrib.eager as tfe
 
 
 class Normalizer(tf.keras.Model):
-    def __init__(self, shape=None, center=True, scale=True):
+    def __init__(self, shape, center=True, scale=True):
         super(Normalizer, self).__init__()
 
         self.center = center
         self.scale = scale
-
-        if shape is None:
-            shape = []
 
         self.count = tfe.Variable(0, dtype=tf.int32, trainable=False)
         self.mean = tfe.Variable(
@@ -47,17 +44,6 @@ class Normalizer(tf.keras.Model):
 
         if self.scale:
             inputs = pynr.math.safe_divide(inputs, self.std[None, None, ...])
-
-        inputs = tf.check_numerics(inputs, 'inputs')
-        return inputs
-
-    def inverse(self, inputs):
-        if self.scale:
-            inputs = pynr.math.safe_divide_inverse(inputs,
-                                                   self.std[None, None, ...])
-
-        if self.center:
-            inputs = inputs + self.mean[None, None, ...]
 
         inputs = tf.check_numerics(inputs, 'inputs')
         return inputs
