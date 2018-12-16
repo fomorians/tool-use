@@ -2,14 +2,13 @@ import tensorflow as tf
 
 
 def policy_ratio_loss(log_probs,
-                      log_probs_old,
+                      log_probs_anchor,
                       advantages,
                       epsilon_clipping=0.2,
                       weights=1.0):
-    log_probs_old = tf.stop_gradient(log_probs_old)
-    advantages = tf.stop_gradient(advantages)
+    log_probs_anchor = tf.stop_gradient(log_probs_anchor)
 
-    ratio = tf.exp(log_probs - log_probs_old)
+    ratio = tf.exp(log_probs - log_probs_anchor)
     ratio = tf.check_numerics(ratio, 'ratio')
 
     surrogate1 = ratio * advantages

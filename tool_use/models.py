@@ -3,8 +3,6 @@ import tensorflow as tf
 import tensorflow.contrib.eager as tfe
 import tensorflow_probability as tfp
 
-from tool_use import math
-
 
 class Policy(tf.keras.Model):
     def __init__(self, observation_space, action_space, scale, **kwargs):
@@ -37,7 +35,7 @@ class Policy(tf.keras.Model):
         return tf.nn.softplus(self.scale_diag_inverse)
 
     def call(self, inputs, training=None):
-        inputs = math.normalize(
+        inputs = pynr.math.high_low_normalize(
             inputs,
             low=self.observation_space.low,
             high=self.observation_space.high)
@@ -68,7 +66,7 @@ class Value(tf.keras.Model):
             units=1, activation=None, kernel_initializer=kernel_initializer)
 
     def call(self, inputs, training=None):
-        inputs = math.normalize(
+        inputs = pynr.math.high_low_normalize(
             inputs,
             low=self.observation_space.low,
             high=self.observation_space.high)

@@ -10,7 +10,7 @@ class HyperParams:
     max_episode_steps = attr.ib(default=200)
 
     # losses
-    value_coef = attr.ib(default=1.0)
+    value_coef = attr.ib(default=1e-3)
     entropy_coef = attr.ib(default=0.05)
 
     # optimization
