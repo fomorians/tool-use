@@ -4,6 +4,37 @@ import tensorflow.contrib.eager as tfe
 import tensorflow_probability as tfp
 
 
+class StateModel(tf.keras.Model):
+    def __init__(self, observation_space, **kwargs):
+        super(StateModel, self).__init__(**kwargs)
+
+        self.observation_space = observation_space
+
+        kernel_initializer = tf.initializers.variance_scaling(scale=2.0)
+        logits_initializer = tf.initializers.variance_scaling(scale=2.0)
+
+        self.dense1 = tf.keras.layers.Dense(
+            units=64,
+            activation=pynr.nn.swish,
+            kernel_initializer=kernel_initializer)
+        self.dense2 = tf.keras.layers.Dense(
+            units=64,
+            activation=pynr.nn.swish,
+            kernel_initializer=kernel_initializer)
+        self.dense_logits = tf.keras.layers.Dense(
+            units=32, activation=None, kernel_initializer=logits_initializer)
+
+    def call(self, inputs, training=None):
+        inputs = pynr.math.high_low_normalize(
+            inputs,
+            low=self.observation_space.low,
+            high=self.observation_space.high)
+        hidden = self.dense1(inputs)
+        hidden = self.dense2(hidden)
+        logits = self.dense_logits(hidden)
+        return logits
+
+
 class Policy(tf.keras.Model):
     def __init__(self, observation_space, action_space, scale, **kwargs):
         super(Policy, self).__init__(**kwargs)

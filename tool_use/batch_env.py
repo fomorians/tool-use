@@ -10,11 +10,11 @@ class BatchEnv(object):
     https://github.com/google-research/batch-ppo/blob/master/agents/tools/batch_env.py
     """
 
-    def __init__(self, constructor, size=None, blocking=True):
-        if size is None:
-            size = multiprocessing.cpu_count()
+    def __init__(self, constructor, batch_size=None, blocking=True):
+        if batch_size is None:
+            batch_size = multiprocessing.cpu_count()
 
-        self.envs = [ProcessEnv(constructor) for env in range(size)]
+        self.envs = [ProcessEnv(constructor) for env in range(batch_size)]
         self.blocking = blocking
 
         observation_space = self.envs[0].observation_space

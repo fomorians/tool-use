@@ -4,6 +4,7 @@ import random
 import argparse
 import numpy as np
 import tensorflow as tf
+import tensorflow.contrib.eager as tfe
 import tensorflow_probability as tfp
 
 import pyoneer.rl as pyrl
@@ -14,7 +15,7 @@ from tqdm import trange
 from tool_use import losses
 from tool_use import targets
 from tool_use.env import KukaEnv
-from tool_use.models import Policy, Value
+from tool_use.models import Policy, Value, StateModel
 from tool_use.params import HyperParams
 from tool_use.batch_env import BatchEnv
 from tool_use.normalizer import Normalizer
@@ -51,7 +52,7 @@ def main():
     # environment
     # env = PendulumEnv()
     # env = KukaEnv()
-    env = BatchEnv(KukaEnv, size=params.episodes, blocking=False)
+    env = BatchEnv(KukaEnv, batch_size=params.episodes, blocking=False)
 
     # seeding
     env.seed(args.seed)
@@ -61,7 +62,10 @@ def main():
 
     # optimization
     global_step = tf.train.create_global_step()
+    state_global_step = tfe.Variable(0, trainable=False)
     optimizer = tf.train.AdamOptimizer(learning_rate=params.learning_rate)
+    state_optimizer = tf.train.AdamOptimizer(
+        learning_rate=params.learning_rate)
 
     # models
     policy = Policy(
@@ -73,17 +77,24 @@ def main():
         action_space=env.action_space,
         scale=params.scale)
     value = Value(observation_space=env.observation_space)
+    state_model = StateModel(observation_space=env.observation_space)
+    state_model_rand = StateModel(observation_space=env.observation_space)
 
     # normalization
-    rewards_normalizer = Normalizer(shape=(), center=False, scale=True)
+    extrinsic_rewards_normalizer = Normalizer(
+        shape=(), center=False, scale=True)
+    intrinsic_rewards_normalizer = Normalizer(
+        shape=(), center=False, scale=True)
 
     # checkpoints
     checkpoint = tf.train.Checkpoint(
         global_step=global_step,
+        state_global_step=state_global_step,
         optimizer=optimizer,
+        state_optimizer=state_optimizer,
         policy=policy,
         value=value,
-        rewards_normalizer=rewards_normalizer)
+        extrinsic_rewards_normalizer=extrinsic_rewards_normalizer)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     if checkpoint_path is not None:
         checkpoint.restore(checkpoint_path)
@@ -120,8 +131,37 @@ def main():
 
         dataset = tf.data.Dataset.from_tensors(transitions)
 
-        for (states, actions, rewards, next_states, weights) in dataset:
-            rewards_norm = rewards_normalizer(rewards, training=True)
+        for (states, actions, extrinsic_rewards, next_states,
+             weights) in dataset:
+            state_model_rand_pred = state_model_rand(states)
+
+            with tf.GradientTape() as tape:
+                state_model_pred = state_model(states)
+                loss = tf.losses.mean_squared_error(
+                    predictions=state_model_pred,
+                    labels=tf.stop_gradient(state_model_rand_pred),
+                    weights=weights[..., None])
+
+            with tf.contrib.summary.always_record_summaries():
+                tf.contrib.summary.scalar('losses/state_model', loss)
+
+            grads = tape.gradient(loss, state_model.trainable_variables)
+            grads_clipped, grads_norm = tf.clip_by_global_norm(
+                grads, params.grad_clipping)
+            grads_clipped_norm = tf.global_norm(grads_clipped)
+            grads_and_vars = zip(grads_clipped,
+                                 state_model.trainable_variables)
+            state_optimizer.apply_gradients(
+                grads_and_vars, global_step=state_global_step)
+
+            intrinsic_rewards = tf.reduce_sum(
+                tf.squared_difference(state_model_pred, state_model_rand_pred),
+                axis=-1)
+            extrinsic_rewards_norm = extrinsic_rewards_normalizer(
+                extrinsic_rewards, training=True)
+            intrinsic_rewards_norm = intrinsic_rewards_normalizer(
+                intrinsic_rewards, training=True)
+            rewards_norm = extrinsic_rewards_norm + intrinsic_rewards_norm
 
             returns = targets.compute_returns(
                 rewards_norm,
@@ -144,20 +184,34 @@ def main():
             log_probs_anchor = tf.check_numerics(log_probs_anchor,
                                                  'log_probs_anchor')
 
-            episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+            episodic_extrinsic_rewards = tf.reduce_mean(
+                tf.reduce_sum(extrinsic_rewards, axis=-1))
+            episodic_intrinsic_rewards = tf.reduce_mean(
+                tf.reduce_sum(intrinsic_rewards, axis=-1))
 
             with tf.contrib.summary.always_record_summaries():
-                tf.contrib.summary.scalar('episodic_rewards/train',
-                                          episodic_rewards)
+                tf.contrib.summary.scalar('episodic_extrinsic_rewards/train',
+                                          episodic_extrinsic_rewards)
+                tf.contrib.summary.scalar('episodic_intrinsic_rewards/train',
+                                          episodic_intrinsic_rewards)
                 tf.contrib.summary.histogram('actions/train', actions)
-                tf.contrib.summary.histogram('rewards/train', rewards)
+                tf.contrib.summary.histogram('extrinsic_rewards/train',
+                                             extrinsic_rewards)
+                tf.contrib.summary.histogram('intrinsic_rewards/train',
+                                             intrinsic_rewards)
 
                 tf.contrib.summary.scalar(
-                    'rewards_normalizer/mean',
-                    tf.reduce_mean(rewards_normalizer.mean))
+                    'extrinsic_rewards_normalizer/mean',
+                    tf.reduce_mean(extrinsic_rewards_normalizer.mean))
                 tf.contrib.summary.scalar(
-                    'rewards_normalizer/std',
-                    tf.reduce_mean(rewards_normalizer.std))
+                    'extrinsic_rewards_normalizer/std',
+                    tf.reduce_mean(extrinsic_rewards_normalizer.std))
+                tf.contrib.summary.scalar(
+                    'intrinsic_rewards_normalizer/mean',
+                    tf.reduce_mean(intrinsic_rewards_normalizer.mean))
+                tf.contrib.summary.scalar(
+                    'intrinsic_rewards_normalizer/std',
+                    tf.reduce_mean(intrinsic_rewards_normalizer.std))
 
             for epoch in range(params.epochs):
                 with tf.GradientTape() as tape:
@@ -227,10 +281,10 @@ def main():
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
 
         with tf.contrib.summary.always_record_summaries():
-            tf.contrib.summary.scalar('episodic_rewards/eval',
+            tf.contrib.summary.scalar('episodic_extrinsic_rewards/eval',
                                       episodic_rewards)
             tf.contrib.summary.histogram('actions/eval', actions)
-            tf.contrib.summary.histogram('rewards/eval', rewards)
+            tf.contrib.summary.histogram('extrinsic_rewards/eval', rewards)
 
         # save checkpoint
         checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
