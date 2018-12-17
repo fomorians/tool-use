@@ -1,0 +1,23 @@
+[[source]]
+url = "https://pypi.org/simple"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+tensorflow = "*"
+gym = "*"
+pybullet = "*"
+trfl = {git = "git://github.com/deepmind/trfl.git"}
+attrs = "*"
+tqdm = "*"
+pyoneer = {editable = true, path = "/Users/fomoro/Documents/pyoneer"}
+jupyterlab = "*"
+
+[dev-packages]
+jupyterlab = "*"
+matplotlib = "*"
+seaborn = "*"
+ipdb = "*"
+
+[requires]
+python_version = "3.6"
