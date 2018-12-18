@@ -4,18 +4,18 @@ import attr
 @attr.s
 class HyperParams:
     # training
-    iters = attr.ib(default=100)
+    iters = attr.ib(default=500)
     eval_interval = attr.ib(default=10)
     episodes = attr.ib(default=10)
     epochs = attr.ib(default=10)
     max_episode_steps = attr.ib(default=200)
 
     # losses
-    value_coef = attr.ib(default=1.0)
+    value_coef = attr.ib(default=1e-3)
     entropy_coef = attr.ib(default=0.0)
 
     # optimization
-    learning_rate = attr.ib(default=1e-3)
+    learning_rate = attr.ib(default=5e-4)
     grad_clipping = attr.ib(default=10.0)
 
     # PPO

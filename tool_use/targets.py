@@ -10,7 +10,11 @@ def compute_returns(rewards, discount_factor=0.99, weights=1.0):
             tf.scan(lambda agg, cur: cur + discount_factor * agg,
                     tf.transpose(tf.reverse(rewards * weights, [1]), [1, 0]),
                     tf.zeros_like(rewards[:, -1]), 1, False), [1, 0]), [1])
-    return tf.check_numerics(tf.stop_gradient(returns), 'returns')
+
+    returns = returns * weights
+    returns = tf.check_numerics(returns, 'returns')
+    returns = tf.stop_gradient(returns)
+    return returns
 
 
 def compute_advantages(rewards,
@@ -33,14 +37,14 @@ def compute_advantages(rewards,
                 lambda agg, cur: cur + discount_factor * lambda_factor * agg,
                 tf.transpose(tf.reverse(delta * weights, [1]), [1, 0]),
                 tf.zeros_like(delta[:, -1]), 1, False), [1, 0]), [1])
-    advantages = tf.check_numerics(advantages, 'advantages')
 
     if normalize:
         advantages_mean, advantages_variance = tf.nn.weighted_moments(
             advantages, axes=[0, 1], frequency_weights=weights, keep_dims=True)
         advantages_stddev = tf.sqrt(advantages_variance + 1e-6) + 1e-8
         advantages = (advantages - advantages_mean) / advantages_stddev
-        advantages = tf.check_numerics(advantages, 'advantages')
 
     advantages = advantages * weights
-    return tf.stop_gradient(advantages)
+    advantages = tf.check_numerics(advantages, 'advantages')
+    advantages = tf.stop_gradient(advantages)
+    return advantages
