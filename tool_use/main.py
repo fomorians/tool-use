@@ -4,7 +4,6 @@ import random
 import argparse
 import numpy as np
 import tensorflow as tf
-import tensorflow.contrib.eager as tfe
 import tensorflow_probability as tfp
 
 import pyoneer.rl as pyrl
@@ -74,7 +73,7 @@ def main():
     value = Value(observation_space=env.observation_space)
 
     # normalization
-    rewards_normalizer = Normalizer(shape=(), center=False, scale=False)
+    rewards_normalizer = Normalizer(shape=(), center=False, scale=True)
 
     # checkpoints
     checkpoint = tf.train.Checkpoint(
@@ -129,11 +128,12 @@ def main():
                 lambda_factor=params.lambda_factor,
                 weights=weights,
                 normalize=True)
-            # returns = targets.compute_returns(
-            #     rewards_norm,
-            #     discount_factor=params.discount_factor,
-            #     weights=weights)
-            returns = advantages + values
+            returns = tf.stop_gradient(advantages + values)
+
+            advantages_mean, advantages_variance = tf.nn.moments(
+                advantages, axes=[0, 1], keep_dims=True)
+            advantages_stddev = tf.sqrt(advantages_variance)
+            advantages = (advantages - advantages_mean) / advantages_stddev
 
             policy_anchor_dist = policy_anchor(states, reset_state=True)
 
@@ -170,37 +170,20 @@ def main():
                     values = value(states, training=True)
 
                     # losses
-                    # policy_loss = losses.policy_ratio_loss(
-                    #     log_probs=log_probs,
-                    #     log_probs_anchor=log_probs_anchor,
-                    #     advantages=advantages,
-                    #     weights=weights,
-                    #     epsilon_clipping=params.epsilon_clipping)
-                    # value_loss = params.value_coef * (
-                    #     tf.losses.mean_squared_error(
-                    #         predictions=values,
-                    #         labels=returns,
-                    #         weights=weights))
-                    # entropy_loss = -params.entropy_coef * (
-                    #     tf.losses.compute_weighted_loss(
-                    #         losses=entropy, weights=weights))
-                    # loss = policy_loss + value_loss + entropy_loss
-
-                    ratio = tf.exp(log_probs -
-                                   tf.stop_gradient(log_probs_anchor))
-                    surrogate1 = ratio * tf.stop_gradient(advantages)
-                    surrogate2 = tf.clip_by_value(
-                        ratio, 1 - params.epsilon_clipping, 1 +
-                        params.epsilon_clipping) * tf.stop_gradient(advantages)
-
-                    policy_loss = -tf.reduce_mean(
-                        tf.minimum(surrogate1, surrogate2))
-                    value_loss = tf.reduce_mean(
-                        tf.squared_difference(values,
-                                              tf.stop_gradient(returns)))
-                    entropy_loss = -params.entropy_coef * tf.reduce_mean(
-                        entropy)
-
+                    policy_loss = losses.policy_ratio_loss(
+                        log_probs=log_probs,
+                        log_probs_anchor=log_probs_anchor,
+                        advantages=advantages,
+                        weights=weights,
+                        epsilon_clipping=params.epsilon_clipping)
+                    value_loss = params.value_coef * (
+                        tf.losses.mean_squared_error(
+                            predictions=values,
+                            labels=returns,
+                            weights=weights))
+                    entropy_loss = -params.entropy_coef * (
+                        tf.losses.compute_weighted_loss(
+                            losses=entropy, weights=weights))
                     loss = policy_loss + value_loss + entropy_loss
 
                 trainable_variables = (
