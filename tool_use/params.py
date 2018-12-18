@@ -12,10 +12,10 @@ class HyperParams:
 
     # losses
     value_coef = attr.ib(default=1e-3)
-    entropy_coef = attr.ib(default=0.0)
+    entropy_coef = attr.ib(default=0.05)
 
     # optimization
-    learning_rate = attr.ib(default=5e-4)
+    learning_rate = attr.ib(default=1e-3)
     grad_clipping = attr.ib(default=10.0)
 
     # PPO
