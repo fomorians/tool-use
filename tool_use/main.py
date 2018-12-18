@@ -127,12 +127,15 @@ def main():
                 discount_factor=params.discount_factor,
                 lambda_factor=params.lambda_factor,
                 weights=weights,
-                normalize=True)
+                normalize=False)
             returns = tf.stop_gradient(advantages + values)
 
-            advantages_mean, advantages_variance = tf.nn.moments(
-                advantages, axes=[0, 1], keep_dims=True)
-            advantages_stddev = tf.sqrt(advantages_variance)
+            advantages_mean, advantages_variance = tf.nn.weighted_moments(
+                advantages,
+                axes=[0, 1],
+                frequency_weights=weights,
+                keep_dims=True)
+            advantages_stddev = tf.sqrt(advantages_variance + 1e-6) + 1e-8
             advantages = (advantages - advantages_mean) / advantages_stddev
 
             policy_anchor_dist = policy_anchor(states, reset_state=True)
