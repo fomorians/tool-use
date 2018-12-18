@@ -38,10 +38,11 @@ def compute_advantages(rewards,
     if normalize:
         advantages_mean, advantages_variance = tf.nn.weighted_moments(
             advantages, axes=[0, 1], frequency_weights=weights, keep_dims=True)
+        advantages_mean, advantages_variance = tf.nn.moments(
+            advantages, axes=[0, 1], keep_dims=True)
         advantages_stddev = tf.sqrt(advantages_variance + 1e-6) + 1e-8
-        advantages = tf.where(
-            tf.equal(weights, 1.0),
-            (advantages - advantages_mean) / advantages_stddev, advantages)
+        advantages = (advantages - advantages_mean) / advantages_stddev
         advantages = tf.check_numerics(advantages, 'advantages')
 
+    advantages = advantages * weights
     return tf.stop_gradient(advantages)

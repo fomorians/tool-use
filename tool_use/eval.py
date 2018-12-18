@@ -4,10 +4,12 @@ import numpy as np
 import tensorflow as tf
 import pyoneer.rl as pyrl
 
-from tool_use.env import KukaEnv
+# from tool_use.env import KukaEnv
 from tool_use.models import Policy
 from tool_use.params import HyperParams
 from tool_use.rollout import Rollout
+
+from gym.envs.classic_control import PendulumEnv
 
 
 class PolicyWrapper:
@@ -35,7 +37,8 @@ def main():
 
     params = HyperParams()
 
-    env = KukaEnv(render=args.render)
+    # env = KukaEnv(render=args.render)
+    env = PendulumEnv()
 
     env.seed(args.seed)
     random.seed(args.seed)
@@ -58,7 +61,7 @@ def main():
     checkpoint.restore(checkpoint_path)
 
     states, actions, rewards, next_states, weights = rollout(
-        inference_strategy, episodes=args.episodes)
+        inference_strategy, episodes=args.episodes, render=args.render)
     episodic_reward = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
     print('episodic_reward:', episodic_reward)
 
