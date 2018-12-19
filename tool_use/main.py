@@ -140,11 +140,11 @@ def main():
                 lambda_factor=params.lambda_factor,
                 weights=weights,
                 normalize=True)
-            # returns = targets.compute_returns(
-            #     rewards=rewards_norm,
-            #     discount_factor=params.discount_factor,
-            #     weights=weights)
-            returns = tf.stop_gradient(advantages + values)
+            returns = targets.compute_returns(
+                rewards=rewards_norm,
+                discount_factor=params.discount_factor,
+                weights=weights)
+            # returns = tf.stop_gradient(advantages + values)
 
             policy_anchor_dist = policy_anchor(states_norm, reset_state=True)
 
@@ -163,6 +163,7 @@ def main():
                 tf.contrib.summary.histogram('rewards/train', rewards)
                 tf.contrib.summary.histogram('returns/train', returns)
                 tf.contrib.summary.histogram('advantages/train', advantages)
+                tf.contrib.summary.histogram('values/train', values)
                 tf.contrib.summary.histogram('rewards_norm/train',
                                              rewards_norm)
 
