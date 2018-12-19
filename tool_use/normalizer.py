@@ -3,6 +3,38 @@ import tensorflow as tf
 import tensorflow.contrib.eager as tfe
 
 
+class HighLowNormalizer(tf.keras.Model):
+    def __init__(self, low, high, alpha, center=True, scale=True):
+        super(HighLowNormalizer, self).__init__()
+
+        self.center = center
+        self.scale = scale
+        self.alpha = alpha
+
+        loc, scale = pynr.math.high_low_loc_and_scale(low=low, high=high)
+
+        self.mean = tfe.Variable(loc, trainable=False)
+        self.std = tfe.Variable(scale, trainable=False)
+
+    def call(self, inputs, training=None):
+        if training:
+            new_mean, new_var = tf.nn.moments(inputs, axes=[0, 1])
+            new_std = tf.sqrt(new_var)
+
+            self.mean.assign(self.mean * self.alpha +
+                             new_mean * (1 - self.alpha))
+            self.std.assign(self.std * self.alpha + new_std * (1 - self.alpha))
+
+        if self.center:
+            inputs = inputs - self.mean[None, None, ...]
+
+        if self.scale:
+            inputs = pynr.math.safe_divide(inputs, self.std[None, None, ...])
+
+        inputs = tf.check_numerics(inputs, 'inputs')
+        return inputs
+
+
 class Normalizer(tf.keras.Model):
     def __init__(self, shape, center=True, scale=True):
         super(Normalizer, self).__init__()
@@ -21,7 +53,7 @@ class Normalizer(tf.keras.Model):
         return tf.sqrt(
             tf.maximum(self.var_sum / tf.to_float(self.count - 1), 0))
 
-    def __call__(self, inputs, training=False):
+    def call(self, inputs, training=None):
         if training:
             self.count.assign_add(tf.reduce_prod(inputs.shape[:2]))
 
@@ -46,14 +78,4 @@ class Normalizer(tf.keras.Model):
             inputs = pynr.math.safe_divide(inputs, self.std[None, None, ...])
 
         inputs = tf.check_numerics(inputs, 'inputs')
-        return inputs
-
-    def inverse(self, inputs):
-        if self.scale:
-            inputs = pynr.math.safe_divide_inverse(inputs,
-                                                   self.std[None, None, ...])
-
-        if self.center:
-            inputs = inputs + self.mean[None, None, ...]
-
         return inputs

@@ -14,10 +14,10 @@ class Policy(tf.keras.Model):
         kernel_initializer = tf.initializers.variance_scaling(scale=2.0)
         logits_initializer = tf.initializers.variance_scaling(scale=2.0)
 
-        # self.initial_hidden_state = tfe.Variable(
-        #     tf.zeros(shape=[64]), trainable=True)
-        # self.initial_cell_state = tfe.Variable(
-        #     tf.zeros(shape=[64]), trainable=True)
+        self.initial_hidden_state = tfe.Variable(
+            tf.zeros(shape=[64]), trainable=True)
+        self.initial_cell_state = tfe.Variable(
+            tf.zeros(shape=[64]), trainable=True)
 
         self.dense1 = tf.keras.layers.Dense(
             units=64,
@@ -28,8 +28,8 @@ class Policy(tf.keras.Model):
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
 
-        # self.rnn = tf.keras.layers.LSTM(
-        #     units=64, return_sequences=True, return_state=True)
+        self.rnn = tf.keras.layers.LSTM(
+            units=64, return_sequences=True, return_state=True)
 
         action_size = action_space.shape[0]
         self.dense_loc = tf.keras.layers.Dense(
@@ -56,19 +56,15 @@ class Policy(tf.keras.Model):
         return hidden_state, cell_state
 
     def call(self, inputs, training=None, reset_state=None):
-        inputs = pynr.math.high_low_normalize(
-            inputs,
-            low=self.observation_space.low,
-            high=self.observation_space.high)
         hidden = self.dense1(inputs)
         hidden = self.dense2(hidden)
 
-        # if self.hidden_state is None or self.cell_state is None or reset_state:
-        #     self.hidden_state, self.cell_state = self.get_initial_state(
-        #         inputs.shape[0])
+        if self.hidden_state is None or self.cell_state is None or reset_state:
+            self.hidden_state, self.cell_state = self.get_initial_state(
+                inputs.shape[0])
 
-        # hidden, self.hidden_state, self.cell_state = self.rnn(
-        #     hidden, initial_state=[self.hidden_state, self.cell_state])
+        hidden, self.hidden_state, self.cell_state = self.rnn(
+            hidden, initial_state=[self.hidden_state, self.cell_state])
 
         loc = self.dense_loc(hidden)
         return tfp.distributions.MultivariateNormalDiag(
@@ -84,10 +80,10 @@ class Value(tf.keras.Model):
         kernel_initializer = tf.initializers.variance_scaling(scale=2.0)
         logits_initializer = tf.initializers.variance_scaling(scale=2.0)
 
-        # self.initial_hidden_state = tfe.Variable(
-        #     tf.zeros(shape=[64]), trainable=True)
-        # self.initial_cell_state = tfe.Variable(
-        #     tf.zeros(shape=[64]), trainable=True)
+        self.initial_hidden_state = tfe.Variable(
+            tf.zeros(shape=[64]), trainable=True)
+        self.initial_cell_state = tfe.Variable(
+            tf.zeros(shape=[64]), trainable=True)
 
         self.dense1 = tf.keras.layers.Dense(
             units=64,
@@ -98,8 +94,8 @@ class Value(tf.keras.Model):
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
 
-        # self.rnn = tf.keras.layers.LSTM(
-        #     units=64, return_sequences=True, return_state=True)
+        self.rnn = tf.keras.layers.LSTM(
+            units=64, return_sequences=True, return_state=True)
 
         self.dense_value = tf.keras.layers.Dense(
             units=1, activation=None, kernel_initializer=logits_initializer)
@@ -115,19 +111,15 @@ class Value(tf.keras.Model):
         return hidden_state, cell_state
 
     def call(self, inputs, training=None, reset_state=None):
-        inputs = pynr.math.high_low_normalize(
-            inputs,
-            low=self.observation_space.low,
-            high=self.observation_space.high)
         hidden = self.dense1(inputs)
         hidden = self.dense2(hidden)
 
-        # if self.hidden_state is None or self.cell_state is None or reset_state:
-        #     self.hidden_state, self.cell_state = self.get_initial_state(
-        #         inputs.shape[0])
+        if self.hidden_state is None or self.cell_state is None or reset_state:
+            self.hidden_state, self.cell_state = self.get_initial_state(
+                inputs.shape[0])
 
-        # hidden, self.hidden_state, self.cell_state = self.rnn(
-        #     hidden, initial_state=[self.hidden_state, self.cell_state])
+        hidden, self.hidden_state, self.cell_state = self.rnn(
+            hidden, initial_state=[self.hidden_state, self.cell_state])
 
         value = self.dense_value(hidden)
         return tf.squeeze(value, axis=-1)

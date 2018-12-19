@@ -17,18 +17,20 @@ from tool_use.env import KukaEnv
 from tool_use.models import Policy, Value
 from tool_use.params import HyperParams
 from tool_use.batch_env import BatchEnv
-from tool_use.normalizer import Normalizer
+from tool_use.normalizer import HighLowNormalizer, Normalizer
 from tool_use.parallel_rollout import ParallelRollout
 
 
 class PolicyWrapper:
-    def __init__(self, policy):
+    def __init__(self, policy, states_normalizer):
         self.policy = policy
+        self.states_normalizer = states_normalizer
 
     def __call__(self, state, *args, **kwargs):
         state = tf.convert_to_tensor(state, dtype=np.float32)
         state_batch = tf.expand_dims(state, axis=1)
-        action_batch = self.policy(state_batch, *args, **kwargs)
+        state_batch_norm = self.states_normalizer(state_batch)
+        action_batch = self.policy(state_batch_norm, *args, **kwargs)
         action = tf.squeeze(action_batch, axis=1)
         action = action.numpy()
         return action
@@ -50,6 +52,7 @@ def main():
 
     # environment
     env = BatchEnv(PendulumEnv, batch_size=params.episodes, blocking=False)
+    state_size = env.observation_space.shape[0]
 
     # seeding
     env.seed(args.seed)
@@ -73,7 +76,13 @@ def main():
     value = Value(observation_space=env.observation_space)
 
     # normalization
-    rewards_normalizer = Normalizer(shape=(), center=False, scale=True)
+    states_normalizer = HighLowNormalizer(
+        low=env.observation_space.low,
+        high=env.observation_space.high,
+        alpha=1,
+        center=True,
+        scale=True)
+    rewards_normalizer = Normalizer(shape=[], center=False, scale=True)
 
     # checkpoints
     checkpoint = tf.train.Checkpoint(
@@ -96,12 +105,14 @@ def main():
 
     # strategies
     exploration_strategy = PolicyWrapper(
-        pyrl.strategies.SampleStrategy(policy))
-    inference_strategy = PolicyWrapper(pyrl.strategies.ModeStrategy(policy))
+        pyrl.strategies.SampleStrategy(policy),
+        states_normalizer=states_normalizer)
+    inference_strategy = PolicyWrapper(
+        pyrl.strategies.ModeStrategy(policy),
+        states_normalizer=states_normalizer)
 
     # prime models
-    mock_states = tf.zeros(
-        shape=(1, 1, env.observation_space.shape[0]), dtype=np.float32)
+    mock_states = tf.zeros(shape=(1, 1, state_size), dtype=np.float32)
     policy(mock_states, reset_state=True)
     policy_anchor(mock_states, reset_state=True)
 
@@ -117,9 +128,10 @@ def main():
         dataset = tf.data.Dataset.from_tensors(transitions)
 
         for (states, actions, rewards, next_states, weights) in dataset:
+            states_norm = states_normalizer(states, training=False)
             rewards_norm = rewards_normalizer(rewards, training=True)
 
-            values = value(states)
+            values = value(states_norm)
 
             advantages = targets.compute_advantages(
                 rewards=rewards_norm,
@@ -128,12 +140,13 @@ def main():
                 lambda_factor=params.lambda_factor,
                 weights=weights,
                 normalize=True)
-            returns = targets.compute_returns(
-                rewards=rewards_norm,
-                discount_factor=params.discount_factor,
-                weights=weights)
+            # returns = targets.compute_returns(
+            #     rewards=rewards_norm,
+            #     discount_factor=params.discount_factor,
+            #     weights=weights)
+            returns = tf.stop_gradient(advantages + values)
 
-            policy_anchor_dist = policy_anchor(states, reset_state=True)
+            policy_anchor_dist = policy_anchor(states_norm, reset_state=True)
 
             log_probs_anchor = policy_anchor_dist.log_prob(actions)
             log_probs_anchor = tf.check_numerics(log_probs_anchor,
@@ -144,8 +157,21 @@ def main():
             with tf.contrib.summary.always_record_summaries():
                 tf.contrib.summary.scalar('episodic_rewards/train',
                                           episodic_rewards)
+                tf.contrib.summary.histogram('states/train', states)
+                tf.contrib.summary.histogram('states_norm/train', states_norm)
                 tf.contrib.summary.histogram('actions/train', actions)
                 tf.contrib.summary.histogram('rewards/train', rewards)
+                tf.contrib.summary.histogram('returns/train', returns)
+                tf.contrib.summary.histogram('advantages/train', advantages)
+                tf.contrib.summary.histogram('rewards_norm/train',
+                                             rewards_norm)
+
+                tf.contrib.summary.scalar(
+                    'states_normalizer/mean',
+                    tf.reduce_mean(states_normalizer.mean))
+                tf.contrib.summary.scalar(
+                    'states_normalizer/std',
+                    tf.reduce_mean(states_normalizer.std))
 
                 tf.contrib.summary.scalar(
                     'rewards_normalizer/mean',
@@ -157,7 +183,7 @@ def main():
             for epoch in range(params.epochs):
                 with tf.GradientTape() as tape:
                     policy_dist = policy(
-                        states, training=True, reset_state=True)
+                        states_norm, training=True, reset_state=True)
 
                     log_probs = policy_dist.log_prob(actions)
                     log_probs = tf.check_numerics(log_probs, 'log_probs')
@@ -165,7 +191,7 @@ def main():
                     entropy = policy_dist.entropy()
                     entropy = tf.check_numerics(entropy, 'entropy')
 
-                    values = value(states, training=True)
+                    values = value(states_norm, training=True)
 
                     # losses
                     policy_loss = losses.policy_ratio_loss(
@@ -228,9 +254,9 @@ def main():
                 tf.contrib.summary.histogram('actions/eval', actions)
                 tf.contrib.summary.histogram('rewards/eval', rewards)
 
-            # save checkpoint
-            checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
-            checkpoint.save(file_prefix=checkpoint_prefix)
+        # save checkpoint
+        checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
+        checkpoint.save(file_prefix=checkpoint_prefix)
 
 
 if __name__ == '__main__':
