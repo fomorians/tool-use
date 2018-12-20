@@ -1,6 +1,5 @@
 import os
 import json
-import time
 import trfl
 import random
 import argparse
@@ -271,41 +270,17 @@ def run_experiment(job_dir, env_name, seed, use_discount):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
-    parser.add_argument('--num-seeds', default=5)
+    parser.add_argument('--env-name', default='Pendulum-v0')
+    parser.add_argument('--use-discount', action='store_true')
+    parser.add_argument('--seed', default=42, type=int)
     args = parser.parse_args()
     print(args)
 
-    continuous_envs = [
-        'MountainCarContinuous-v0',
-        'Pendulum-v0',
-        'LunarLanderContinuous-v2',
-        'BipedalWalker-v2',
-    ]
-
-    # discrete_envs = [
-    #     'Acrobot-v1',
-    #     'CartPole-v1',
-    #     'MountainCar-v0',
-    #     'LunarLander-v2',
-    # ]
-
-    for env_name in continuous_envs:
-        for _ in range(args.num_seeds):
-            seed = int(time.time())
-            job_dir = os.path.join(args.job_dir, env_name, str(seed),
-                                   'discount')
-            run_experiment(
-                job_dir=job_dir,
-                env_name=env_name,
-                seed=seed,
-                use_discount=True)
-
-            job_dir = os.path.join(args.job_dir, env_name, str(seed), 'custom')
-            run_experiment(
-                job_dir=job_dir,
-                env_name=env_name,
-                seed=seed,
-                use_discount=False)
+    run_experiment(
+        job_dir=args.job_dir,
+        env_name=args.env_name,
+        seed=args.seed,
+        use_discount=args.use_discount)
 
 
 if __name__ == '__main__':
