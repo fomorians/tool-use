@@ -1,15 +1,13 @@
+import gym
 import random
 import argparse
 import numpy as np
 import tensorflow as tf
 import pyoneer.rl as pyrl
 
-from tool_use.env import KukaEnv
 from tool_use.models import Policy
 from tool_use.params import HyperParams
 from tool_use.rollout import Rollout
-
-from gym.envs.classic_control import PendulumEnv
 
 
 class PolicyWrapper:
@@ -28,6 +26,7 @@ class PolicyWrapper:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
+    parser.add_argument('--env-name', default='Pendulum-v0')
     parser.add_argument('--seed', default=42)
     parser.add_argument('--episodes', default=10)
     parser.add_argument('--render', action='store_true')
@@ -37,15 +36,15 @@ def main():
 
     params = HyperParams()
 
-    env = KukaEnv(render=args.render)
-    # env = PendulumEnv()
+    env = gym.make(args.env_name)
+    spec = env.unwrapped.spec
 
     env.seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
     tf.set_random_seed(args.seed)
 
-    rollout = Rollout(env, max_episode_steps=params.max_episode_steps)
+    rollout = Rollout(env, max_episode_steps=spec.max_episode_steps)
 
     policy = Policy(
         observation_space=env.observation_space,
@@ -61,7 +60,7 @@ def main():
     checkpoint.restore(checkpoint_path)
 
     states, actions, rewards, next_states, weights = rollout(
-        inference_strategy, episodes=args.episodes)
+        inference_strategy, episodes=args.episodes, render=args.render)
     episodic_reward = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
     print('episodic_reward:', episodic_reward)
 

@@ -5,7 +5,7 @@ name = "pypi"
 
 [packages]
 tensorflow = "*"
-gym = "*"
+gym = {extras = ["box2d"], version = "*"}
 pybullet = "*"
 trfl = {git = "git://github.com/deepmind/trfl.git"}
 attrs = "*"

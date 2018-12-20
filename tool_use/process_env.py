@@ -1,3 +1,4 @@
+import gym
 import sys
 import atexit
 import traceback
@@ -16,10 +17,10 @@ class ProcessEnv(object):
     _EXCEPTION = 4
     _CLOSE = 5
 
-    def __init__(self, constructor):
+    def __init__(self, env_name):
         self._conn, conn = multiprocessing.Pipe()
         self._process = multiprocessing.Process(
-            target=self._worker, args=(constructor, conn))
+            target=self._worker, args=(env_name, conn))
 
         atexit.register(self.close)
 
@@ -93,9 +94,9 @@ class ProcessEnv(object):
         raise KeyError(
             'Received message of unexpected type {}'.format(message))
 
-    def _worker(self, constructor, conn):
+    def _worker(self, env_name, conn):
         try:
-            env = constructor()
+            env = gym.make(env_name)
 
             while True:
                 try:

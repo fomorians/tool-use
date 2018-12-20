@@ -12,7 +12,7 @@ class Policy(tf.keras.Model):
         self.action_space = action_space
 
         kernel_initializer = tf.initializers.variance_scaling(scale=2.0)
-        logits_initializer = tf.initializers.variance_scaling(scale=2.0)
+        logits_initializer = tf.initializers.variance_scaling(scale=1.0)
 
         # self.initial_hidden_state = tfe.Variable(
         #     tf.zeros(shape=[64]), trainable=True)
@@ -34,7 +34,7 @@ class Policy(tf.keras.Model):
         action_size = action_space.shape[0]
         self.dense_loc = tf.keras.layers.Dense(
             units=action_size,
-            activation=None,
+            activation=tf.tanh,
             kernel_initializer=logits_initializer)
 
         self.scale_diag_inverse = tfe.Variable(
@@ -56,6 +56,14 @@ class Policy(tf.keras.Model):
     #     return hidden_state, cell_state
 
     def call(self, inputs, training=None, reset_state=None):
+        high = self.observation_space.high
+        low = self.observation_space.low
+
+        high = tf.where(tf.is_finite(high), high, tf.ones_like(high))
+        low = tf.where(tf.is_finite(low), low, -tf.ones_like(low))
+
+        inputs = pynr.math.high_low_normalize(inputs, low=low, high=high)
+
         hidden = self.dense1(inputs)
         hidden = self.dense2(hidden)
 
@@ -67,6 +75,13 @@ class Policy(tf.keras.Model):
         #     hidden, initial_state=[self.hidden_state, self.cell_state])
 
         loc = self.dense_loc(hidden)
+        loc = pynr.math.rescale(
+            loc,
+            oldmin=-1,
+            oldmax=1,
+            newmin=self.action_space.low,
+            newmax=self.action_space.high)
+
         return tfp.distributions.MultivariateNormalDiag(
             loc=loc, scale_diag=self.scale_diag)
 
@@ -78,7 +93,7 @@ class Value(tf.keras.Model):
         self.observation_space = observation_space
 
         kernel_initializer = tf.initializers.variance_scaling(scale=2.0)
-        logits_initializer = tf.initializers.variance_scaling(scale=2.0)
+        logits_initializer = tf.initializers.variance_scaling(scale=1.0)
 
         # self.initial_hidden_state = tfe.Variable(
         #     tf.zeros(shape=[64]), trainable=True)
@@ -111,6 +126,14 @@ class Value(tf.keras.Model):
     #     return hidden_state, cell_state
 
     def call(self, inputs, training=None, reset_state=None):
+        high = self.observation_space.high
+        low = self.observation_space.low
+
+        high = tf.where(tf.is_finite(high), high, tf.ones_like(high))
+        low = tf.where(tf.is_finite(low), low, -tf.ones_like(low))
+
+        inputs = pynr.math.high_low_normalize(inputs, low=low, high=high)
+
         hidden = self.dense1(inputs)
         hidden = self.dense2(hidden)
 
@@ -122,4 +145,5 @@ class Value(tf.keras.Model):
         #     hidden, initial_state=[self.hidden_state, self.cell_state])
 
         value = self.dense_value(hidden)
-        return tf.squeeze(value, axis=-1)
+        value = tf.squeeze(value, axis=-1)
+        return value

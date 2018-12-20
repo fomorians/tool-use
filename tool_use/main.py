@@ -1,4 +1,6 @@
 import os
+import json
+import time
 import trfl
 import random
 import argparse
@@ -6,59 +8,56 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 
+import pyoneer as pynr
 import pyoneer.rl as pyrl
 
 from tqdm import trange
-from gym.envs.classic_control import PendulumEnv
 
 from tool_use import losses
 from tool_use import targets
-from tool_use.env import KukaEnv
 from tool_use.models import Policy, Value
 from tool_use.params import HyperParams
 from tool_use.batch_env import BatchEnv
-from tool_use.normalizer import HighLowNormalizer, Normalizer
+from tool_use.normalizer import Normalizer
 from tool_use.parallel_rollout import ParallelRollout
 
 
 class PolicyWrapper:
-    def __init__(self, policy, states_normalizer):
+    def __init__(self, policy):
         self.policy = policy
-        self.states_normalizer = states_normalizer
 
     def __call__(self, state, *args, **kwargs):
         state = tf.convert_to_tensor(state, dtype=np.float32)
         state_batch = tf.expand_dims(state, axis=1)
-        state_batch_norm = self.states_normalizer(state_batch)
-        action_batch = self.policy(state_batch_norm, *args, **kwargs)
+        action_batch = self.policy(state_batch, *args, **kwargs)
         action = tf.squeeze(action_batch, axis=1)
         action = action.numpy()
         return action
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--job-dir', required=True)
-    parser.add_argument('--seed', default=42)
-    args = parser.parse_args()
-    print(args)
+def run_experiment(job_dir, env_name, seed, use_discount):
+    # make job directory
+    if not os.path.exists(job_dir):
+        os.makedirs(job_dir)
 
     # params
     params = HyperParams()
+    params_path = os.path.join(job_dir, 'params.json')
+    params.save(params_path)
     print(params)
 
     # eager
     tf.enable_eager_execution()
 
     # environment
-    env = BatchEnv(PendulumEnv, batch_size=params.episodes, blocking=False)
+    env = BatchEnv(env_name, batch_size=params.episodes, blocking=False)
     state_size = env.observation_space.shape[0]
 
     # seeding
-    env.seed(args.seed)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    tf.set_random_seed(args.seed)
+    env.seed(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.set_random_seed(seed)
 
     # optimization
     global_step = tf.train.create_global_step()
@@ -76,12 +75,6 @@ def main():
     value = Value(observation_space=env.observation_space)
 
     # normalization
-    states_normalizer = HighLowNormalizer(
-        low=env.observation_space.low,
-        high=env.observation_space.high,
-        alpha=1,
-        center=True,
-        scale=True)
     rewards_normalizer = Normalizer(shape=[], center=False, scale=True)
 
     # checkpoints
@@ -91,25 +84,23 @@ def main():
         policy=policy,
         value=value,
         rewards_normalizer=rewards_normalizer)
-    checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
+    checkpoint_path = tf.train.latest_checkpoint(job_dir)
     if checkpoint_path is not None:
         checkpoint.restore(checkpoint_path)
 
     # summaries
     summary_writer = tf.contrib.summary.create_file_writer(
-        args.job_dir, max_queue=1, flush_millis=1000)
+        job_dir, max_queue=1, flush_millis=1000)
     summary_writer.set_as_default()
 
     # rollouts
-    rollout = ParallelRollout(env, max_episode_steps=params.max_episode_steps)
+    rollout = ParallelRollout(
+        env, max_episode_steps=env.spec.max_episode_steps)
 
     # strategies
     exploration_strategy = PolicyWrapper(
-        pyrl.strategies.SampleStrategy(policy),
-        states_normalizer=states_normalizer)
-    inference_strategy = PolicyWrapper(
-        pyrl.strategies.ModeStrategy(policy),
-        states_normalizer=states_normalizer)
+        pyrl.strategies.SampleStrategy(policy))
+    inference_strategy = PolicyWrapper(pyrl.strategies.ModeStrategy(policy))
 
     # prime models
     mock_states = tf.zeros(shape=(1, 1, state_size), dtype=np.float32)
@@ -121,6 +112,20 @@ def main():
         source_variables=policy.variables,
         target_variables=policy_anchor.variables)
 
+    reward_history = []
+
+    # evaluation
+    states, actions, rewards, next_states, weights = rollout(
+        inference_strategy)
+    episodic_rewards = tf.reduce_mean(
+        tf.reduce_sum(rewards * weights, axis=-1))
+    reward_history.append(float(episodic_rewards.numpy()))
+
+    with tf.contrib.summary.always_record_summaries():
+        tf.contrib.summary.scalar('episodic_rewards/eval', episodic_rewards)
+        tf.contrib.summary.histogram('actions/eval', actions)
+        tf.contrib.summary.histogram('rewards/eval', rewards)
+
     for it in trange(params.iters):
         # training
         transitions = rollout(exploration_strategy)
@@ -128,51 +133,48 @@ def main():
         dataset = tf.data.Dataset.from_tensors(transitions)
 
         for (states, actions, rewards, next_states, weights) in dataset:
-            states_norm = states_normalizer(states, training=False)
-            rewards_norm = rewards_normalizer(rewards, training=True)
+            rewards_norm = rewards_normalizer(rewards, weights, training=True)
 
-            values = value(states_norm)
+            values_target = value(states)
 
             advantages = targets.compute_advantages(
                 rewards=rewards_norm,
-                values=values,
+                values=values_target,
                 discount_factor=params.discount_factor,
                 lambda_factor=params.lambda_factor,
                 weights=weights,
-                normalize=True)
-            returns = targets.compute_returns(
-                rewards=rewards_norm,
-                discount_factor=params.discount_factor,
-                weights=weights)
-            # returns = tf.stop_gradient(advantages + values)
+                normalize=False)
+            advantages_norm = pynr.math.weighted_moments_normalize(
+                advantages, weights=weights)
+            if use_discount:
+                returns = targets.compute_returns(
+                    rewards=rewards_norm,
+                    discount_factor=params.discount_factor,
+                    weights=weights)
+            else:
+                returns = tf.stop_gradient(advantages_norm + values_target)
 
-            policy_anchor_dist = policy_anchor(states_norm, reset_state=True)
+            policy_anchor_dist = policy_anchor(states, reset_state=True)
 
             log_probs_anchor = policy_anchor_dist.log_prob(actions)
             log_probs_anchor = tf.check_numerics(log_probs_anchor,
                                                  'log_probs_anchor')
 
-            episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+            episodic_rewards = tf.reduce_mean(
+                tf.reduce_sum(rewards * weights, axis=-1))
 
             with tf.contrib.summary.always_record_summaries():
                 tf.contrib.summary.scalar('episodic_rewards/train',
                                           episodic_rewards)
                 tf.contrib.summary.histogram('states/train', states)
-                tf.contrib.summary.histogram('states_norm/train', states_norm)
                 tf.contrib.summary.histogram('actions/train', actions)
                 tf.contrib.summary.histogram('rewards/train', rewards)
                 tf.contrib.summary.histogram('returns/train', returns)
-                tf.contrib.summary.histogram('advantages/train', advantages)
-                tf.contrib.summary.histogram('values/train', values)
+                tf.contrib.summary.histogram('advantages/train',
+                                             advantages_norm)
+                tf.contrib.summary.histogram('values/train', values_target)
                 tf.contrib.summary.histogram('rewards_norm/train',
                                              rewards_norm)
-
-                tf.contrib.summary.scalar(
-                    'states_normalizer/mean',
-                    tf.reduce_mean(states_normalizer.mean))
-                tf.contrib.summary.scalar(
-                    'states_normalizer/std',
-                    tf.reduce_mean(states_normalizer.std))
 
                 tf.contrib.summary.scalar(
                     'rewards_normalizer/mean',
@@ -184,7 +186,7 @@ def main():
             for epoch in range(params.epochs):
                 with tf.GradientTape() as tape:
                     policy_dist = policy(
-                        states_norm, training=True, reset_state=True)
+                        states, training=True, reset_state=True)
 
                     log_probs = policy_dist.log_prob(actions)
                     log_probs = tf.check_numerics(log_probs, 'log_probs')
@@ -192,13 +194,13 @@ def main():
                     entropy = policy_dist.entropy()
                     entropy = tf.check_numerics(entropy, 'entropy')
 
-                    values = value(states_norm, training=True)
+                    values = value(states, training=True)
 
                     # losses
                     policy_loss = losses.policy_ratio_loss(
                         log_probs=log_probs,
                         log_probs_anchor=log_probs_anchor,
-                        advantages=advantages,
+                        advantages=advantages_norm,
                         weights=weights,
                         epsilon_clipping=params.epsilon_clipping)
                     value_loss = params.value_coef * (
@@ -244,10 +246,12 @@ def main():
             target_variables=policy_anchor.trainable_variables)
 
         # evaluation
-        if it % params.eval_interval == 0:
+        if it % params.eval_interval == params.eval_interval - 1:
             states, actions, rewards, next_states, weights = rollout(
                 inference_strategy)
-            episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+            episodic_rewards = tf.reduce_mean(
+                tf.reduce_sum(rewards * weights, axis=-1))
+            reward_history.append(float(episodic_rewards.numpy()))
 
             with tf.contrib.summary.always_record_summaries():
                 tf.contrib.summary.scalar('episodic_rewards/eval',
@@ -256,8 +260,52 @@ def main():
                 tf.contrib.summary.histogram('rewards/eval', rewards)
 
         # save checkpoint
-        checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
+        checkpoint_prefix = os.path.join(job_dir, 'ckpt')
         checkpoint.save(file_prefix=checkpoint_prefix)
+
+    rewards_path = os.path.join(job_dir, 'rewards.json')
+    with open(rewards_path, 'w') as fp:
+        json.dump(reward_history, fp)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--job-dir', required=True)
+    parser.add_argument('--num-seeds', default=5)
+    args = parser.parse_args()
+    print(args)
+
+    continuous_envs = [
+        'MountainCarContinuous-v0',
+        'Pendulum-v0',
+        'LunarLanderContinuous-v2',
+        'BipedalWalker-v2',
+    ]
+
+    # discrete_envs = [
+    #     'Acrobot-v1',
+    #     'CartPole-v1',
+    #     'MountainCar-v0',
+    #     'LunarLander-v2',
+    # ]
+
+    for env_name in continuous_envs:
+        for _ in range(args.num_seeds):
+            seed = int(time.time())
+            job_dir = os.path.join(args.job_dir, env_name, str(seed),
+                                   'discount')
+            run_experiment(
+                job_dir=job_dir,
+                env_name=env_name,
+                seed=seed,
+                use_discount=True)
+
+            job_dir = os.path.join(args.job_dir, env_name, str(seed), 'custom')
+            run_experiment(
+                job_dir=job_dir,
+                env_name=env_name,
+                seed=seed,
+                use_discount=False)
 
 
 if __name__ == '__main__':
