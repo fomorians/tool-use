@@ -10,8 +10,6 @@ import tensorflow_probability as tfp
 import pyoneer as pynr
 import pyoneer.rl as pyrl
 
-from tqdm import trange
-
 from tool_use import losses
 from tool_use import targets
 from tool_use.models import Policy, Value
@@ -34,14 +32,22 @@ class PolicyWrapper:
         return action
 
 
-def run_experiment(job_dir, env_name, seed, use_discount):
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--job-dir', required=True)
+    parser.add_argument('--env-name', default='Pendulum-v0')
+    parser.add_argument('--use-discount', action='store_true')
+    parser.add_argument('--seed', default=42, type=int)
+    args = parser.parse_args()
+    print(args)
+
     # make job directory
-    if not os.path.exists(job_dir):
-        os.makedirs(job_dir)
+    if not os.path.exists(args.job_dir):
+        os.makedirs(args.job_dir)
 
     # params
     params = HyperParams()
-    params_path = os.path.join(job_dir, 'params.json')
+    params_path = os.path.join(args.job_dir, 'params.json')
     params.save(params_path)
     print(params)
 
@@ -49,14 +55,14 @@ def run_experiment(job_dir, env_name, seed, use_discount):
     tf.enable_eager_execution()
 
     # environment
-    env = BatchEnv(env_name, batch_size=params.episodes, blocking=False)
+    env = BatchEnv(args.env_name, batch_size=params.episodes, blocking=False)
     state_size = env.observation_space.shape[0]
 
     # seeding
-    env.seed(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    tf.set_random_seed(seed)
+    env.seed(args.seed)
+    random.seed(args.seed)
+    np.random.seed(args.seed)
+    tf.set_random_seed(args.seed)
 
     # optimization
     global_step = tf.train.create_global_step()
@@ -83,13 +89,13 @@ def run_experiment(job_dir, env_name, seed, use_discount):
         policy=policy,
         value=value,
         rewards_normalizer=rewards_normalizer)
-    checkpoint_path = tf.train.latest_checkpoint(job_dir)
+    checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     if checkpoint_path is not None:
         checkpoint.restore(checkpoint_path)
 
     # summaries
     summary_writer = tf.contrib.summary.create_file_writer(
-        job_dir, max_queue=1, flush_millis=1000)
+        args.job_dir, max_queue=1000, flush_millis=5 * 60 * 1000)
     summary_writer.set_as_default()
 
     # rollouts
@@ -125,11 +131,14 @@ def run_experiment(job_dir, env_name, seed, use_discount):
         tf.contrib.summary.histogram('actions/eval', actions)
         tf.contrib.summary.histogram('rewards/eval', rewards)
 
-    for it in trange(params.iters):
+    for it in range(params.iters):
+        print('iteration:', it)
+
         # training
         transitions = rollout(exploration_strategy)
 
         dataset = tf.data.Dataset.from_tensors(transitions)
+        dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
 
         for (states, actions, rewards, next_states, weights) in dataset:
             rewards_norm = rewards_normalizer(rewards, weights, training=True)
@@ -145,7 +154,7 @@ def run_experiment(job_dir, env_name, seed, use_discount):
                 normalize=False)
             advantages_norm = pynr.math.weighted_moments_normalize(
                 advantages, weights=weights)
-            if use_discount:
+            if args.use_discount:
                 returns = targets.compute_returns(
                     rewards=rewards_norm,
                     discount_factor=params.discount_factor,
@@ -258,29 +267,13 @@ def run_experiment(job_dir, env_name, seed, use_discount):
                 tf.contrib.summary.histogram('actions/eval', actions)
                 tf.contrib.summary.histogram('rewards/eval', rewards)
 
-        # save checkpoint
-        checkpoint_prefix = os.path.join(job_dir, 'ckpt')
-        checkpoint.save(file_prefix=checkpoint_prefix)
+            # save checkpoint
+            checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
+            checkpoint.save(file_prefix=checkpoint_prefix)
 
-    rewards_path = os.path.join(job_dir, 'rewards.json')
+    rewards_path = os.path.join(args.job_dir, 'rewards.json')
     with open(rewards_path, 'w') as fp:
         json.dump(reward_history, fp)
-
-
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--job-dir', required=True)
-    parser.add_argument('--env-name', default='Pendulum-v0')
-    parser.add_argument('--use-discount', action='store_true')
-    parser.add_argument('--seed', default=42, type=int)
-    args = parser.parse_args()
-    print(args)
-
-    run_experiment(
-        job_dir=args.job_dir,
-        env_name=args.env_name,
-        seed=args.seed,
-        use_discount=args.use_discount)
 
 
 if __name__ == '__main__':

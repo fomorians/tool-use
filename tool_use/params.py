@@ -5,7 +5,7 @@ import json
 @attr.s
 class HyperParams:
     # training
-    iters = attr.ib(default=500)
+    iters = attr.ib(default=1000)
     eval_interval = attr.ib(default=10)
     episodes = attr.ib(default=10)
     epochs = attr.ib(default=10)
