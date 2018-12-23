@@ -36,7 +36,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
     parser.add_argument('--env-name', default='Pendulum-v0')
-    parser.add_argument('--use-discount', action='store_true')
     parser.add_argument('--seed', default=42, type=int)
     args = parser.parse_args()
     print(args)
@@ -95,7 +94,7 @@ def main():
 
     # summaries
     summary_writer = tf.contrib.summary.create_file_writer(
-        args.job_dir, max_queue=1000, flush_millis=5 * 60 * 1000)
+        args.job_dir, max_queue=100, flush_millis=5 * 60 * 1000)
     summary_writer.set_as_default()
 
     # rollouts
@@ -138,7 +137,6 @@ def main():
         transitions = rollout(exploration_strategy)
 
         dataset = tf.data.Dataset.from_tensors(transitions)
-        dataset = dataset.prefetch(tf.contrib.data.AUTOTUNE)
 
         for (states, actions, rewards, next_states, weights) in dataset:
             rewards_norm = rewards_normalizer(rewards, weights, training=True)
@@ -150,17 +148,15 @@ def main():
                 values=values_target,
                 discount_factor=params.discount_factor,
                 lambda_factor=params.lambda_factor,
-                weights=weights,
-                normalize=False)
+                weights=weights)
             advantages_norm = pynr.math.weighted_moments_normalize(
                 advantages, weights=weights)
-            if args.use_discount:
-                returns = targets.compute_returns(
-                    rewards=rewards_norm,
-                    discount_factor=params.discount_factor,
-                    weights=weights)
-            else:
-                returns = tf.stop_gradient(advantages_norm + values_target)
+            # returns = targets.compute_improved_returns(
+            #     advantages_norm=advantages_norm, values=values_target)
+            returns = targets.compute_discounted_rewards(
+                rewards=rewards,
+                discount_factor=params.discount_factor,
+                weights=weights)
 
             policy_anchor_dist = policy_anchor(states, reset_state=True)
 
@@ -267,9 +263,9 @@ def main():
                 tf.contrib.summary.histogram('actions/eval', actions)
                 tf.contrib.summary.histogram('rewards/eval', rewards)
 
-            # save checkpoint
-            checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
-            checkpoint.save(file_prefix=checkpoint_prefix)
+        # save checkpoint
+        checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
+        checkpoint.save(file_prefix=checkpoint_prefix)
 
     rewards_path = os.path.join(args.job_dir, 'rewards.json')
     with open(rewards_path, 'w') as fp:
