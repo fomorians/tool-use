@@ -5,7 +5,7 @@ PROJECT="tool-use"
 
 JOB_NAME=$(echo "${ENV_NAME}_$SEED" | tr "-" "_")
 ENV_PATH=$(echo "${ENV_NAME}" | tr "[:upper:]" "[:lower:]" | tr "_" "-")
-JOB_DIR="gs://$PROJECT-jobs/$ENV_NAME/$SEED/discount"
+JOB_DIR="gs://$PROJECT-jobs/$ENV_NAME/$SEED/"
 
 PACKAGES="$HOME/Documents/trfl/dist/trfl-1.0.tar.gz,$HOME/Documents/pyoneer/dist/pyoneer-0.0.0.tar.gz,$HOME/Documents/box2d-py/dist/box2d_py-2.3.8-cp35-cp35m-linux_x86_64.whl"
 

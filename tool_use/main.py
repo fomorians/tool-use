@@ -12,11 +12,18 @@ import pyoneer.rl as pyrl
 
 from tool_use import losses
 from tool_use import targets
-from tool_use.models import Policy, Value
+from tool_use.models import Policy, Value, StateEmbedding, InverseModel
 from tool_use.params import HyperParams
 from tool_use.batch_env import BatchEnv
 from tool_use.normalizer import Normalizer
 from tool_use.parallel_rollout import ParallelRollout
+
+train_iters = {
+    'Pendulum-v0': 100,
+    'MountainCarContinuous-v0': 100,
+    'LunarLanderContinuous-v2': 1000,
+    'BipedalWalker-v2': 1000,
+}
 
 
 class PolicyWrapper:
@@ -68,15 +75,14 @@ def main():
     optimizer = tf.train.AdamOptimizer(learning_rate=params.learning_rate)
 
     # models
+    state_embedding = StateEmbedding(observation_space=env.observation_space)
+    inverse_model = InverseModel(
+        action_space=env.action_space, scale=params.scale)
     policy = Policy(
-        observation_space=env.observation_space,
-        action_space=env.action_space,
-        scale=params.scale)
+        state_embedding=state_embedding, inverse_model=inverse_model)
     policy_anchor = Policy(
-        observation_space=env.observation_space,
-        action_space=env.action_space,
-        scale=params.scale)
-    value = Value(observation_space=env.observation_space)
+        state_embedding=state_embedding, inverse_model=inverse_model)
+    value = Value(state_embedding=state_embedding)
 
     # normalization
     rewards_normalizer = Normalizer(shape=[], center=False, scale=True)
@@ -130,7 +136,7 @@ def main():
         tf.contrib.summary.histogram('actions/eval', actions)
         tf.contrib.summary.histogram('rewards/eval', rewards)
 
-    for it in range(params.iters):
+    for it in range(train_iters[args.env_name]):
         print('iteration:', it)
 
         # training
@@ -151,11 +157,13 @@ def main():
                 weights=weights)
             advantages_norm = pynr.math.weighted_moments_normalize(
                 advantages, weights=weights)
-            # returns = targets.compute_improved_returns(
-            #     advantages_norm=advantages_norm, values=values_target)
-            returns = targets.compute_discounted_rewards(
-                rewards=rewards,
-                discount_factor=params.discount_factor,
+            # returns = targets.compute_discounted_rewards(
+            #     rewards=rewards,
+            #     discount_factor=params.discount_factor,
+            #     weights=weights)
+            returns = targets.compute_improved_returns(
+                advantages_norm=advantages_norm,
+                values=values_target,
                 weights=weights)
 
             policy_anchor_dist = policy_anchor(states, reset_state=True)
@@ -198,7 +206,21 @@ def main():
                     entropy = policy_dist.entropy()
                     entropy = tf.check_numerics(entropy, 'entropy')
 
-                    values = value(states, training=True)
+                    values = value(states, training=True, reset_state=True)
+
+                    # inverse model loss: f(s, s') -> a
+                    state_embeddings = state_embedding(
+                        states, training=True, reset_state=True)
+                    next_state_embeddings = state_embedding(
+                        next_states, training=True, reset_state=True)
+                    inverse_dist = inverse_model(
+                        state_embeddings,
+                        next_state_embeddings,
+                        training=True,
+                        reset_state=True)
+                    inverse_log_probs = inverse_dist.log_prob(actions)
+                    inverse_log_probs = tf.check_numerics(
+                        inverse_log_probs, 'inverse_log_probs')
 
                     # losses
                     policy_loss = losses.policy_ratio_loss(
@@ -207,18 +229,23 @@ def main():
                         advantages=advantages_norm,
                         weights=weights,
                         epsilon_clipping=params.epsilon_clipping)
-                    value_loss = params.value_coef * (
-                        tf.losses.mean_squared_error(
-                            predictions=values,
-                            labels=returns,
-                            weights=weights))
-                    entropy_loss = -params.entropy_coef * (
-                        tf.losses.compute_weighted_loss(
-                            losses=entropy, weights=weights))
-                    loss = policy_loss + value_loss + entropy_loss
+                    value_loss = tf.losses.mean_squared_error(
+                        predictions=values,
+                        labels=returns,
+                        weights=weights * params.value_coef)
+                    entropy_loss = -tf.losses.compute_weighted_loss(
+                        losses=entropy, weights=weights * params.entropy_coef)
+                    inverse_loss = -tf.losses.compute_weighted_loss(
+                        losses=inverse_log_probs,
+                        weights=weights * params.inverse_coef)
+                    loss = (
+                        policy_loss + value_loss + entropy_loss + inverse_loss)
 
-                trainable_variables = (
-                    policy.trainable_variables + value.trainable_variables)
+                trainable_variables = list(
+                    set(policy.trainable_variables +
+                        value.trainable_variables +
+                        inverse_model.trainable_variables +
+                        state_embedding.trainable_variables))
                 grads = tape.gradient(loss, trainable_variables)
                 grads_clipped, grads_norm = tf.clip_by_global_norm(
                     grads, params.grad_clipping)
@@ -233,12 +260,15 @@ def main():
                     losses=entropy, weights=weights)
 
                 with tf.contrib.summary.always_record_summaries():
-                    tf.contrib.summary.scalar('scale_diag', policy.scale_diag)
+                    tf.contrib.summary.scalar('scale_diag',
+                                              policy.inverse_model.scale_diag)
                     tf.contrib.summary.scalar('entropy', entropy_mean)
                     tf.contrib.summary.scalar('kl', kl)
                     tf.contrib.summary.scalar('losses/policy_loss',
                                               policy_loss)
                     tf.contrib.summary.scalar('losses/entropy', entropy_loss)
+                    tf.contrib.summary.scalar('losses/inverse_loss',
+                                              inverse_loss)
                     tf.contrib.summary.scalar('losses/value_loss', value_loss)
                     tf.contrib.summary.scalar('grads_norm', grads_norm)
                     tf.contrib.summary.scalar('grads_norm/clipped',
@@ -263,9 +293,9 @@ def main():
                 tf.contrib.summary.histogram('actions/eval', actions)
                 tf.contrib.summary.histogram('rewards/eval', rewards)
 
-        # save checkpoint
-        checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
-        checkpoint.save(file_prefix=checkpoint_prefix)
+            # save checkpoint
+            checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
+            checkpoint.save(file_prefix=checkpoint_prefix)
 
     rewards_path = os.path.join(args.job_dir, 'rewards.json')
     with open(rewards_path, 'w') as fp:
