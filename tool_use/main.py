@@ -12,18 +12,11 @@ import pyoneer.rl as pyrl
 
 from tool_use import losses
 from tool_use import targets
-from tool_use.models import Policy, Value, StateEmbedding, InverseModel
+from tool_use.models import Policy, Value
 from tool_use.params import HyperParams
 from tool_use.batch_env import BatchEnv
 from tool_use.normalizer import Normalizer
 from tool_use.parallel_rollout import ParallelRollout
-
-train_iters = {
-    'Pendulum-v0': 100,
-    'MountainCarContinuous-v0': 100,
-    'LunarLanderContinuous-v2': 1000,
-    'BipedalWalker-v2': 1000,
-}
 
 
 class PolicyWrapper:
@@ -43,7 +36,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
     parser.add_argument('--env-name', default='Pendulum-v0')
-    parser.add_argument('--seed', default=42, type=int)
+    parser.add_argument('--seed', default=42)
     args = parser.parse_args()
     print(args)
 
@@ -52,7 +45,7 @@ def main():
         os.makedirs(args.job_dir)
 
     # params
-    params = HyperParams()
+    params = HyperParams(env_name=args.env_name, seed=args.seed)
     params_path = os.path.join(args.job_dir, 'params.json')
     params.save(params_path)
     print(params)
@@ -61,28 +54,28 @@ def main():
     tf.enable_eager_execution()
 
     # environment
-    env = BatchEnv(args.env_name, batch_size=params.episodes, blocking=False)
-    state_size = env.observation_space.shape[0]
+    env = BatchEnv(params.env_name, batch_size=params.episodes, blocking=False)
 
     # seeding
-    env.seed(args.seed)
-    random.seed(args.seed)
-    np.random.seed(args.seed)
-    tf.set_random_seed(args.seed)
+    env.seed(params.seed)
+    random.seed(params.seed)
+    np.random.seed(params.seed)
+    tf.set_random_seed(params.seed)
 
     # optimization
     global_step = tf.train.create_global_step()
     optimizer = tf.train.AdamOptimizer(learning_rate=params.learning_rate)
 
     # models
-    state_embedding = StateEmbedding(observation_space=env.observation_space)
-    inverse_model = InverseModel(
-        action_space=env.action_space, scale=params.scale)
     policy = Policy(
-        state_embedding=state_embedding, inverse_model=inverse_model)
+        observation_space=env.observation_space,
+        action_space=env.action_space,
+        scale=params.scale)
     policy_anchor = Policy(
-        state_embedding=state_embedding, inverse_model=inverse_model)
-    value = Value(state_embedding=state_embedding)
+        observation_space=env.observation_space,
+        action_space=env.action_space,
+        scale=params.scale)
+    value = Value(observation_space=env.observation_space)
 
     # normalization
     rewards_normalizer = Normalizer(shape=[], center=False, scale=True)
@@ -113,6 +106,7 @@ def main():
     inference_strategy = PolicyWrapper(pyrl.strategies.ModeStrategy(policy))
 
     # prime models
+    state_size = env.observation_space.shape[0]
     mock_states = tf.zeros(shape=(1, 1, state_size), dtype=np.float32)
     policy(mock_states, reset_state=True)
     policy_anchor(mock_states, reset_state=True)
@@ -136,7 +130,7 @@ def main():
         tf.contrib.summary.histogram('actions/eval', actions)
         tf.contrib.summary.histogram('rewards/eval', rewards)
 
-    for it in range(train_iters[args.env_name]):
+    for it in range(params.train_iters):
         print('iteration:', it)
 
         # training
@@ -208,20 +202,6 @@ def main():
 
                     values = value(states, training=True, reset_state=True)
 
-                    # inverse model loss: f(s, s') -> a
-                    state_embeddings = state_embedding(
-                        states, training=True, reset_state=True)
-                    next_state_embeddings = state_embedding(
-                        next_states, training=True, reset_state=True)
-                    inverse_dist = inverse_model(
-                        state_embeddings,
-                        next_state_embeddings,
-                        training=True,
-                        reset_state=True)
-                    inverse_log_probs = inverse_dist.log_prob(actions)
-                    inverse_log_probs = tf.check_numerics(
-                        inverse_log_probs, 'inverse_log_probs')
-
                     # losses
                     policy_loss = losses.policy_ratio_loss(
                         log_probs=log_probs,
@@ -235,17 +215,10 @@ def main():
                         weights=weights * params.value_coef)
                     entropy_loss = -tf.losses.compute_weighted_loss(
                         losses=entropy, weights=weights * params.entropy_coef)
-                    inverse_loss = -tf.losses.compute_weighted_loss(
-                        losses=inverse_log_probs,
-                        weights=weights * params.inverse_coef)
-                    loss = (
-                        policy_loss + value_loss + entropy_loss + inverse_loss)
+                    loss = (policy_loss + value_loss + entropy_loss)
 
-                trainable_variables = list(
-                    set(policy.trainable_variables +
-                        value.trainable_variables +
-                        inverse_model.trainable_variables +
-                        state_embedding.trainable_variables))
+                trainable_variables = (
+                    policy.trainable_variables + value.trainable_variables)
                 grads = tape.gradient(loss, trainable_variables)
                 grads_clipped, grads_norm = tf.clip_by_global_norm(
                     grads, params.grad_clipping)
@@ -260,15 +233,12 @@ def main():
                     losses=entropy, weights=weights)
 
                 with tf.contrib.summary.always_record_summaries():
-                    tf.contrib.summary.scalar('scale_diag',
-                                              policy.inverse_model.scale_diag)
+                    tf.contrib.summary.scalar('scale_diag', policy.scale_diag)
                     tf.contrib.summary.scalar('entropy', entropy_mean)
                     tf.contrib.summary.scalar('kl', kl)
                     tf.contrib.summary.scalar('losses/policy_loss',
                                               policy_loss)
                     tf.contrib.summary.scalar('losses/entropy', entropy_loss)
-                    tf.contrib.summary.scalar('losses/inverse_loss',
-                                              inverse_loss)
                     tf.contrib.summary.scalar('losses/value_loss', value_loss)
                     tf.contrib.summary.scalar('grads_norm', grads_norm)
                     tf.contrib.summary.scalar('grads_norm/clipped',

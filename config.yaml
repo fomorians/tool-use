@@ -1,6 +1,6 @@
 trainingInput:
   scaleTier: CUSTOM
-  masterType: complex_model_m
+  masterType: complex_model_s
   runtimeVersion: '1.12'
   pythonVersion: '3.5'
   region: 'us-west1'
