@@ -36,7 +36,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
     parser.add_argument('--env-name', default='Pendulum-v0')
-    parser.add_argument('--seed', default=42)
+    parser.add_argument('--seed', default=42, type=int)
     args = parser.parse_args()
     print(args)
 
@@ -116,14 +116,11 @@ def main():
         source_variables=policy.variables,
         target_variables=policy_anchor.variables)
 
-    reward_history = []
-
     # evaluation
     states, actions, rewards, next_states, weights = rollout(
         inference_strategy)
     episodic_rewards = tf.reduce_mean(
         tf.reduce_sum(rewards * weights, axis=-1))
-    reward_history.append(float(episodic_rewards.numpy()))
 
     with tf.contrib.summary.always_record_summaries():
         tf.contrib.summary.scalar('episodic_rewards/eval', episodic_rewards)
@@ -255,7 +252,6 @@ def main():
                 inference_strategy)
             episodic_rewards = tf.reduce_mean(
                 tf.reduce_sum(rewards * weights, axis=-1))
-            reward_history.append(float(episodic_rewards.numpy()))
 
             with tf.contrib.summary.always_record_summaries():
                 tf.contrib.summary.scalar('episodic_rewards/eval',
@@ -266,10 +262,6 @@ def main():
             # save checkpoint
             checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
             checkpoint.save(file_prefix=checkpoint_prefix)
-
-    rewards_path = os.path.join(args.job_dir, 'rewards.json')
-    with open(rewards_path, 'w') as fp:
-        json.dump(reward_history, fp)
 
 
 if __name__ == '__main__':
