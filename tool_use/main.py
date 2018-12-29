@@ -1,5 +1,4 @@
 import os
-import json
 import trfl
 import random
 import argparse
