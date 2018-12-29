@@ -75,7 +75,8 @@ def main():
         observation_space=env.observation_space,
         action_space=env.action_space,
         scale=params.scale)
-    value = Value(observation_space=env.observation_space)
+    value = Value(
+        observation_space=env.observation_space, action_space=env.action_space)
 
     # normalization
     rewards_normalizer = Normalizer(shape=[], center=False, scale=True)
@@ -138,24 +139,16 @@ def main():
         for (states, actions, rewards, next_states, weights) in dataset:
             rewards_norm = rewards_normalizer(rewards, weights, training=True)
 
-            values_target = value(states)
+            values_target = value(states, actions, reset_state=True)
 
-            advantages = targets.compute_advantages(
+            returns = targets.improved_returns(
                 rewards=rewards_norm,
                 values=values_target,
                 discount_factor=params.discount_factor,
                 lambda_factor=params.lambda_factor,
                 weights=weights)
-            advantages_norm = pynr.math.weighted_moments_normalize(
-                advantages, weights=weights)
-            # returns = targets.compute_discounted_rewards(
-            #     rewards=rewards,
-            #     discount_factor=params.discount_factor,
-            #     weights=weights)
-            returns = targets.compute_improved_returns(
-                advantages_norm=advantages_norm,
-                values=values_target,
-                weights=weights)
+            advantages = pynr.math.weighted_moments_normalize(
+                returns, weights=weights)
 
             policy_anchor_dist = policy_anchor(states, reset_state=True)
 
@@ -173,8 +166,7 @@ def main():
                 tf.contrib.summary.histogram('actions/train', actions)
                 tf.contrib.summary.histogram('rewards/train', rewards)
                 tf.contrib.summary.histogram('returns/train', returns)
-                tf.contrib.summary.histogram('advantages/train',
-                                             advantages_norm)
+                tf.contrib.summary.histogram('advantages/train', advantages)
                 tf.contrib.summary.histogram('values/train', values_target)
                 tf.contrib.summary.histogram('rewards_norm/train',
                                              rewards_norm)
@@ -197,13 +189,14 @@ def main():
                     entropy = policy_dist.entropy()
                     entropy = tf.check_numerics(entropy, 'entropy')
 
-                    values = value(states, training=True, reset_state=True)
+                    values = value(
+                        states, actions, training=True, reset_state=True)
 
                     # losses
                     policy_loss = losses.policy_ratio_loss(
                         log_probs=log_probs,
                         log_probs_anchor=log_probs_anchor,
-                        advantages=advantages_norm,
+                        advantages=advantages,
                         weights=weights,
                         epsilon_clipping=params.epsilon_clipping)
                     value_loss = tf.losses.mean_squared_error(
