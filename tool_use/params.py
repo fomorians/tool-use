@@ -33,6 +33,7 @@ class HyperParams:
     discount_factor = attr.ib(default=0.99)
     lambda_factor = attr.ib(default=0.95)
     scale = attr.ib(default=1.0)
+    reward_decay = attr.ib(default=0.99)
 
     @property
     def train_iters(self):
