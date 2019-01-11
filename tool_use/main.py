@@ -6,7 +6,6 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-import pyoneer as pynr
 import pyoneer.rl as pyrl
 
 from tool_use import losses
@@ -76,13 +75,9 @@ def main():
         scale=params.scale)
     value = Value(
         observation_space=env.observation_space, action_space=env.action_space)
-    value_target = Value(
-        observation_space=env.observation_space, action_space=env.action_space)
 
     # normalization
     rewards_normalizer = MovingAverageNormalizer(
-        shape=[], rate=params.reward_decay, center=False, scale=True)
-    returns_normalizer = MovingAverageNormalizer(
         shape=[], rate=params.reward_decay, center=False, scale=True)
 
     # checkpoints
@@ -91,8 +86,7 @@ def main():
         optimizer=optimizer,
         policy=policy,
         value=value,
-        rewards_normalizer=rewards_normalizer,
-        returns_normalizer=returns_normalizer)
+        rewards_normalizer=rewards_normalizer)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     if checkpoint_path is not None:
         checkpoint.restore(checkpoint_path)
@@ -121,9 +115,6 @@ def main():
     trfl.update_target_variables(
         source_variables=policy.variables,
         target_variables=policy_anchor.variables)
-    trfl.update_target_variables(
-        source_variables=value.variables,
-        target_variables=value_target.variables)
 
     # evaluation
     states, actions, rewards, next_states, weights = rollout(
@@ -147,29 +138,19 @@ def main():
         for (states, actions, rewards, next_states, weights) in dataset:
             rewards_norm = rewards_normalizer(rewards, weights, training=True)
 
-            values_target = value_target(states, actions, reset_state=True)
+            values_target = value(states, actions, reset_state=True)
 
-            if False:
-                advantages = targets.generalized_advantages(
-                    rewards=rewards_norm,
-                    values=values_target,
-                    discount_factor=params.discount_factor,
-                    lambda_factor=params.lambda_factor,
-                    weights=weights,
-                    normalize=True)
-                returns = advantages + values_target
-                returns = returns_normalizer(returns, weights, training=True)
-            else:
-                returns = targets.generalized_advantages(
-                    rewards=rewards_norm,
-                    values=values_target,
-                    discount_factor=params.discount_factor,
-                    lambda_factor=params.lambda_factor,
-                    weights=weights,
-                    normalize=False)
-                returns = returns_normalizer(returns, weights, training=True)
-                advantages = pynr.math.weighted_moments_normalize(
-                    returns, weights=weights)
+            advantages = targets.generalized_advantages(
+                rewards=rewards_norm,
+                values=values_target,
+                discount_factor=params.discount_factor,
+                lambda_factor=params.lambda_factor,
+                weights=weights,
+                normalize=True)
+            returns = targets.discounted_rewards(
+                rewards_norm,
+                discount_factor=params.discount_factor,
+                weights=weights)
 
             policy_anchor_dist = policy_anchor(states, reset_state=True)
 
@@ -259,12 +240,6 @@ def main():
         trfl.update_target_variables(
             source_variables=policy.trainable_variables,
             target_variables=policy_anchor.trainable_variables)
-
-        # update target
-        trfl.update_target_variables(
-            source_variables=value.trainable_variables,
-            target_variables=value_target.trainable_variables,
-            tau=params.reward_decay)
 
         # evaluation
         if it % params.eval_interval == params.eval_interval - 1:

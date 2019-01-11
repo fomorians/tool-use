@@ -22,7 +22,7 @@ class HyperParams:
 
     # losses
     value_coef = attr.ib(default=1.0)
-    entropy_coef = attr.ib(default=0.01)
+    entropy_coef = attr.ib(default=0.05)
 
     # optimization
     learning_rate = attr.ib(default=1e-3)
