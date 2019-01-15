@@ -8,6 +8,8 @@ import tensorflow_probability as tfp
 
 import pyoneer.rl as pyrl
 
+from tqdm import trange
+
 from tool_use import losses
 from tool_use import targets
 from tool_use.models import Policy, Value
@@ -15,19 +17,6 @@ from tool_use.params import HyperParams
 from tool_use.batch_env import BatchEnv
 from tool_use.normalizer import MovingAverageNormalizer
 from tool_use.parallel_rollout import ParallelRollout
-
-
-class PolicyWrapper:
-    def __init__(self, policy):
-        self.policy = policy
-
-    def __call__(self, state, *args, **kwargs):
-        state = tf.convert_to_tensor(state, dtype=np.float32)
-        state_batch = tf.expand_dims(state, axis=1)
-        action_batch = self.policy(state_batch, *args, **kwargs)
-        action = tf.squeeze(action_batch, axis=1)
-        action = action.numpy()
-        return action
 
 
 def main():
@@ -52,7 +41,10 @@ def main():
     tf.enable_eager_execution()
 
     # environment
-    env = BatchEnv(params.env_name, batch_size=params.episodes, blocking=False)
+    env = pyrl.envs.BatchEnv(
+        constructor=lambda: gym.make(params.env_name),
+        batch_size=params.episodes,
+        blocking=False)
 
     # seeding
     env.seed(params.seed)
@@ -101,9 +93,8 @@ def main():
         env, max_episode_steps=env.spec.max_episode_steps)
 
     # strategies
-    exploration_strategy = PolicyWrapper(
-        pyrl.strategies.SampleStrategy(policy))
-    inference_strategy = PolicyWrapper(pyrl.strategies.ModeStrategy(policy))
+    exploration_strategy = pyrl.strategies.SampleStrategy(policy)
+    inference_strategy = pyrl.strategies.ModeStrategy(policy)
 
     # prime models
     state_size = env.observation_space.shape[0]
@@ -127,9 +118,7 @@ def main():
         tf.contrib.summary.histogram('actions/eval', actions)
         tf.contrib.summary.histogram('rewards/eval', rewards)
 
-    for it in range(params.train_iters):
-        print('iteration:', it)
-
+    for it in trange(params.train_iters):
         # training
         transitions = rollout(exploration_strategy)
 
@@ -148,7 +137,7 @@ def main():
                 weights=weights,
                 normalize=True)
             returns = targets.discounted_rewards(
-                rewards_norm,
+                rewards=rewards_norm,
                 discount_factor=params.discount_factor,
                 weights=weights)
 

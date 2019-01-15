@@ -10,19 +10,6 @@ from tool_use.params import HyperParams
 from tool_use.rollout import Rollout
 
 
-class PolicyWrapper:
-    def __init__(self, policy):
-        self.policy = policy
-
-    def __call__(self, state, *args, **kwargs):
-        state = tf.convert_to_tensor(state, dtype=np.float32)
-        state_batch = state[None, None, ...]
-        action_batch = self.policy(state_batch, *args, **kwargs)
-        action = action_batch[0, 0]
-        action = action.numpy()
-        return action
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
@@ -52,7 +39,6 @@ def main():
         scale=params.scale)
 
     inference_strategy = pyrl.strategies.ModeStrategy(policy)
-    inference_strategy = PolicyWrapper(inference_strategy)
 
     checkpoint = tf.train.Checkpoint(policy=policy)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)

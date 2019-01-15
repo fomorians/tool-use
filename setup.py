@@ -5,7 +5,6 @@ REQUIRED_PACKAGES = [
     'tensorflow-probability',
     'gym',
     'attrs',
-    'trfl',
     'pyoneer',
 ]
 
