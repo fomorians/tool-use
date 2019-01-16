@@ -99,11 +99,6 @@ def main():
     policy(mock_states, reset_state=True)
     policy_anchor(mock_states, reset_state=True)
 
-    # sync variables
-    pynr.training.update_target_variables(
-        source_variables=policy.variables,
-        target_variables=policy_anchor.variables)
-
     # evaluation
     states, actions, rewards, next_states, weights = rollout(
         inference_strategy)
@@ -112,16 +107,21 @@ def main():
 
     with tf.contrib.summary.always_record_summaries():
         tf.contrib.summary.scalar('episodic_rewards/eval', episodic_rewards)
-        tf.contrib.summary.histogram('actions/eval', actions)
-        tf.contrib.summary.histogram('rewards/eval', rewards)
 
     for it in trange(params.train_iters):
         # training
         transitions = rollout(exploration_strategy)
-
         dataset = tf.data.Dataset.from_tensors(transitions)
 
+        # sync variables
+        pynr.training.update_target_variables(
+            source_variables=policy.variables,
+            target_variables=policy_anchor.variables)
+
         for (states, actions, rewards, next_states, weights) in dataset:
+            episodic_rewards = tf.reduce_mean(
+                tf.reduce_sum(rewards * weights, axis=-1))
+
             rewards_moments(rewards, weights=weights, training=True)
             rewards_norm = pynr.math.normalize(
                 rewards,
@@ -144,36 +144,21 @@ def main():
                 weights=weights)
 
             policy_anchor_dist = policy_anchor(states, reset_state=True)
-
             log_probs_anchor = policy_anchor_dist.log_prob(actions)
-            log_probs_anchor = tf.check_numerics(log_probs_anchor,
-                                                 'log_probs_anchor')
-
-            episodic_rewards = tf.reduce_mean(
-                tf.reduce_sum(rewards * weights, axis=-1))
 
             with tf.contrib.summary.always_record_summaries():
                 tf.contrib.summary.scalar('episodic_rewards/train',
                                           episodic_rewards)
-                tf.contrib.summary.histogram('states/train', states)
-                tf.contrib.summary.histogram('actions/train', actions)
-                tf.contrib.summary.histogram('rewards/train', rewards)
-                tf.contrib.summary.histogram('returns/train', returns)
-                tf.contrib.summary.histogram('advantages/train', advantages)
-                tf.contrib.summary.histogram('values/train', values_target)
-                tf.contrib.summary.histogram('rewards_norm/train',
-                                             rewards_norm)
-
                 tf.contrib.summary.scalar('rewards_moments/mean',
-                                          tf.reduce_mean(rewards_moments.mean))
+                                          rewards_moments.mean)
                 tf.contrib.summary.scalar('rewards_moments/std',
-                                          tf.reduce_mean(rewards_moments.std))
+                                          rewards_moments.std)
 
             for epoch in range(params.epochs):
                 with tf.GradientTape() as tape:
+                    # forward passes
                     policy_dist = policy(
                         states, training=True, reset_state=True)
-
                     log_probs = policy_dist.log_prob(actions)
                     entropy = policy_dist.entropy()
                     values = baseline(states, training=True, reset_state=True)
@@ -212,18 +197,12 @@ def main():
                     tf.contrib.summary.scalar('scale_diag', policy.scale_diag)
                     tf.contrib.summary.scalar('entropy', entropy_mean)
                     tf.contrib.summary.scalar('kl', kl)
-                    tf.contrib.summary.scalar('losses/policy_loss',
-                                              policy_loss)
+                    tf.contrib.summary.scalar('losses/policy', policy_loss)
+                    tf.contrib.summary.scalar('losses/value', value_loss)
                     tf.contrib.summary.scalar('losses/entropy', entropy_loss)
-                    tf.contrib.summary.scalar('losses/value_loss', value_loss)
                     tf.contrib.summary.scalar('grads_norm', grads_norm)
                     tf.contrib.summary.scalar('grads_norm/clipped',
                                               grads_clipped_norm)
-
-        # sync variables
-        pynr.training.update_target_variables(
-            source_variables=policy.variables,
-            target_variables=policy_anchor.variables)
 
         # evaluation
         if it % params.eval_interval == params.eval_interval - 1:
@@ -235,8 +214,6 @@ def main():
             with tf.contrib.summary.always_record_summaries():
                 tf.contrib.summary.scalar('episodic_rewards/eval',
                                           episodic_rewards)
-                tf.contrib.summary.histogram('actions/eval', actions)
-                tf.contrib.summary.histogram('rewards/eval', rewards)
 
             # save checkpoint
             checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
