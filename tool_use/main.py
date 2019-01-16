@@ -1,28 +1,25 @@
 import os
-import trfl
+import gym
 import random
 import argparse
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 
+import pyoneer as pynr
 import pyoneer.rl as pyrl
 
 from tqdm import trange
 
-from tool_use import losses
-from tool_use import targets
 from tool_use.models import Policy, Value
 from tool_use.params import HyperParams
-from tool_use.batch_env import BatchEnv
-from tool_use.normalizer import MovingAverageNormalizer
 from tool_use.parallel_rollout import ParallelRollout
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
-    parser.add_argument('--env-name', default='Pendulum-v0')
+    parser.add_argument('--env', default='Pendulum-v0')
     parser.add_argument('--seed', default=42, type=int)
     args = parser.parse_args()
     print(args)
@@ -32,7 +29,7 @@ def main():
         os.makedirs(args.job_dir)
 
     # params
-    params = HyperParams(env_name=args.env_name, seed=args.seed)
+    params = HyperParams(env=args.env, seed=args.seed)
     params_path = os.path.join(args.job_dir, 'params.json')
     params.save(params_path)
     print(params)
@@ -42,7 +39,7 @@ def main():
 
     # environment
     env = pyrl.envs.BatchEnv(
-        constructor=lambda: gym.make(params.env_name),
+        constructor=lambda: gym.make(params.env),
         batch_size=params.episodes,
         blocking=False)
 
@@ -65,20 +62,23 @@ def main():
         observation_space=env.observation_space,
         action_space=env.action_space,
         scale=params.scale)
-    value = Value(
-        observation_space=env.observation_space, action_space=env.action_space)
+    baseline = Value(observation_space=env.observation_space)
+
+    # strategies
+    exploration_strategy = pyrl.strategies.SampleStrategy(policy)
+    inference_strategy = pyrl.strategies.ModeStrategy(policy)
 
     # normalization
-    rewards_normalizer = MovingAverageNormalizer(
-        shape=[], rate=params.reward_decay, center=False, scale=True)
+    rewards_moments = pynr.nn.ExponentialMovingMoments(
+        shape=(), rate=params.reward_decay)
 
     # checkpoints
     checkpoint = tf.train.Checkpoint(
         global_step=global_step,
         optimizer=optimizer,
         policy=policy,
-        value=value,
-        rewards_normalizer=rewards_normalizer)
+        baseline=baseline,
+        rewards_moments=rewards_moments)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     if checkpoint_path is not None:
         checkpoint.restore(checkpoint_path)
@@ -92,18 +92,15 @@ def main():
     rollout = ParallelRollout(
         env, max_episode_steps=env.spec.max_episode_steps)
 
-    # strategies
-    exploration_strategy = pyrl.strategies.SampleStrategy(policy)
-    inference_strategy = pyrl.strategies.ModeStrategy(policy)
-
     # prime models
-    state_size = env.observation_space.shape[0]
-    mock_states = tf.zeros(shape=(1, 1, state_size), dtype=np.float32)
+    # NOTE: TF eager does not initialize weights until they're called
+    mock_states = tf.zeros(
+        shape=(1, 1, env.observation_space.shape[0]), dtype=np.float32)
     policy(mock_states, reset_state=True)
     policy_anchor(mock_states, reset_state=True)
 
     # sync variables
-    trfl.update_target_variables(
+    pynr.training.update_target_variables(
         source_variables=policy.variables,
         target_variables=policy_anchor.variables)
 
@@ -125,18 +122,23 @@ def main():
         dataset = tf.data.Dataset.from_tensors(transitions)
 
         for (states, actions, rewards, next_states, weights) in dataset:
-            rewards_norm = rewards_normalizer(rewards, weights, training=True)
+            rewards_moments(rewards, weights=weights, training=True)
+            rewards_norm = pynr.math.normalize(
+                rewards,
+                loc=rewards_moments.mean,
+                scale=rewards_moments.std,
+                weights=weights)
 
-            values_target = value(states, actions, reset_state=True)
+            values_target = baseline(states, reset_state=True)
 
-            advantages = targets.generalized_advantages(
+            advantages = pyrl.targets.generalized_advantages(
                 rewards=rewards_norm,
                 values=values_target,
                 discount_factor=params.discount_factor,
                 lambda_factor=params.lambda_factor,
                 weights=weights,
                 normalize=True)
-            returns = targets.discounted_rewards(
+            returns = pyrl.targets.discounted_rewards(
                 rewards=rewards_norm,
                 discount_factor=params.discount_factor,
                 weights=weights)
@@ -162,12 +164,10 @@ def main():
                 tf.contrib.summary.histogram('rewards_norm/train',
                                              rewards_norm)
 
-                tf.contrib.summary.scalar(
-                    'rewards_normalizer/mean',
-                    tf.reduce_mean(rewards_normalizer.mean))
-                tf.contrib.summary.scalar(
-                    'rewards_normalizer/std',
-                    tf.reduce_mean(rewards_normalizer.std))
+                tf.contrib.summary.scalar('rewards_moments/mean',
+                                          tf.reduce_mean(rewards_moments.mean))
+                tf.contrib.summary.scalar('rewards_moments/std',
+                                          tf.reduce_mean(rewards_moments.std))
 
             for epoch in range(params.epochs):
                 with tf.GradientTape() as tape:
@@ -175,31 +175,26 @@ def main():
                         states, training=True, reset_state=True)
 
                     log_probs = policy_dist.log_prob(actions)
-                    log_probs = tf.check_numerics(log_probs, 'log_probs')
-
                     entropy = policy_dist.entropy()
-                    entropy = tf.check_numerics(entropy, 'entropy')
-
-                    values = value(
-                        states, actions, training=True, reset_state=True)
+                    values = baseline(states, training=True, reset_state=True)
 
                     # losses
-                    policy_loss = losses.policy_ratio_loss(
+                    policy_loss = pyrl.losses.clipped_policy_gradient_loss(
                         log_probs=log_probs,
                         log_probs_anchor=log_probs_anchor,
                         advantages=advantages,
-                        weights=weights,
-                        epsilon_clipping=params.epsilon_clipping)
+                        epsilon_clipping=params.epsilon_clipping,
+                        weights=weights)
                     value_loss = tf.losses.mean_squared_error(
                         predictions=values,
                         labels=returns,
                         weights=weights * params.value_coef)
                     entropy_loss = -tf.losses.compute_weighted_loss(
                         losses=entropy, weights=weights * params.entropy_coef)
-                    loss = (policy_loss + value_loss + entropy_loss)
+                    loss = policy_loss + value_loss + entropy_loss
 
                 trainable_variables = (
-                    policy.trainable_variables + value.trainable_variables)
+                    policy.trainable_variables + baseline.trainable_variables)
                 grads = tape.gradient(loss, trainable_variables)
                 grads_clipped, grads_norm = tf.clip_by_global_norm(
                     grads, params.grad_clipping)
@@ -225,10 +220,10 @@ def main():
                     tf.contrib.summary.scalar('grads_norm/clipped',
                                               grads_clipped_norm)
 
-        # update anchor
-        trfl.update_target_variables(
-            source_variables=policy.trainable_variables,
-            target_variables=policy_anchor.trainable_variables)
+        # sync variables
+        pynr.training.update_target_variables(
+            source_variables=policy.variables,
+            target_variables=policy_anchor.variables)
 
         # evaluation
         if it % params.eval_interval == params.eval_interval - 1:

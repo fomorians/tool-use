@@ -13,7 +13,7 @@ from tool_use.rollout import Rollout
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
-    parser.add_argument('--env-name', default='Pendulum-v0')
+    parser.add_argument('--env', default='Pendulum-v0')
     parser.add_argument('--seed', default=42)
     parser.add_argument('--episodes', default=10)
     parser.add_argument('--render', action='store_true')
@@ -21,17 +21,16 @@ def main():
 
     tf.enable_eager_execution()
 
-    params = HyperParams()
+    params = HyperParams(env=args.env, seed=args.seed)
 
     env = gym.make(args.env_name)
-    spec = env.unwrapped.spec
 
     env.seed(args.seed)
     random.seed(args.seed)
     np.random.seed(args.seed)
     tf.set_random_seed(args.seed)
 
-    rollout = Rollout(env, max_episode_steps=spec.max_episode_steps)
+    rollout = Rollout(env, max_episode_steps=env.spec.max_episode_steps)
 
     policy = Policy(
         observation_space=env.observation_space,

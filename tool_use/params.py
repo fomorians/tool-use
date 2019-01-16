@@ -12,13 +12,14 @@ TRAIN_ITERS = {
 @attr.s
 class HyperParams:
     # environment
-    env_name = attr.ib()
+    env = attr.ib()
     seed = attr.ib()
 
     # training
     eval_interval = attr.ib(default=10)
     episodes = attr.ib(default=10)
     epochs = attr.ib(default=10)
+    reward_decay = attr.ib(default=0.9)
 
     # losses
     value_coef = attr.ib(default=1.0)
@@ -33,11 +34,10 @@ class HyperParams:
     discount_factor = attr.ib(default=0.99)
     lambda_factor = attr.ib(default=0.95)
     scale = attr.ib(default=1.0)
-    reward_decay = attr.ib(default=0.99)
 
     @property
     def train_iters(self):
-        return TRAIN_ITERS[self.env_name]
+        return TRAIN_ITERS[self.env]
 
     def save(self, path):
         with open(path, 'w') as fp:

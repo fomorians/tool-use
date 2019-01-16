@@ -1,7 +1,8 @@
 import numpy as np
+import tensorflow as tf
 
 
-class ParallelRollout(object):
+class ParallelRollout:
     def __init__(self, env, max_episode_steps):
         self.env = env
         self.max_episode_steps = max_episode_steps
@@ -31,7 +32,14 @@ class ParallelRollout(object):
 
         for step in range(self.max_episode_steps):
             reset_state = (step == 0)
-            action = policy(state, reset_state=reset_state)
+
+            state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
+            action_batch = policy(
+                state_tensor[:, None, ...],
+                training=False,
+                reset_state=reset_state)
+            action = action_batch[:, 0].numpy()
+
             next_state, reward, done, info = self.env.step(action)
 
             states[:, step] = state
@@ -43,6 +51,7 @@ class ParallelRollout(object):
                 # if the episode is not done set the weight to 1
                 if not episode_done[episode]:
                     weights[episode, step] = 1.0
+
                 # if the episode is done mark it as done
                 episode_done[episode] = episode_done[episode] or done[episode]
 

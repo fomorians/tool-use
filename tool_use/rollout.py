@@ -32,10 +32,14 @@ class Rollout:
                 if render:
                     self.env.render()
 
-                state_tensor = tf.convert_to_tensor(state, dtype=np.float32)
+                reset_state = (step == 0)
+
+                state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
                 action_batch = policy(
-                    state_tensor[None, ...], reset_state=(step == 0))
-                action = action_batch[0].numpy()
+                    state_tensor[None, None, ...],
+                    training=False,
+                    reset_state=reset_state)
+                action = action_batch[0, 0].numpy()
 
                 next_state, reward, done, info = self.env.step(action)
 
