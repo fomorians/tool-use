@@ -11,8 +11,6 @@ class Policy(tf.keras.Model):
         self.observation_space = observation_space
         self.action_space = action_space
 
-        action_size = self.action_space.shape[0]
-
         kernel_initializer = tf.keras.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.keras.initializers.VarianceScaling(scale=1.0)
         scale_initializer = pynr.initializers.SoftplusInverse(scale=scale)
@@ -27,11 +25,11 @@ class Policy(tf.keras.Model):
             kernel_initializer=kernel_initializer)
 
         self.dense_loc = tf.keras.layers.Dense(
-            units=action_size,
+            units=self.action_space.shape[0],
             activation=tf.tanh,
             kernel_initializer=logits_initializer)
         self.scale_diag_inverse = tfe.Variable(
-            scale_initializer([scale] * action_size), trainable=True)
+            scale_initializer(self.action_space.shape), trainable=True)
 
     @property
     def scale_diag(self):
