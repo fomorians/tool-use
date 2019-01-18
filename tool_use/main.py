@@ -48,11 +48,11 @@ def main():
     print(args)
 
     # register kuka env
-    # gym.envs.register(
-    #     id='KukaEnv-v0',
-    #     entry_point='tool_use.kuka_env:KukaEnv',
-    #     max_episode_steps=1000)
-    # gym.make('KukaEnv-v0')
+    gym.envs.register(
+        id='KukaEnv-v0',
+        entry_point='tool_use.kuka_env:KukaEnv',
+        max_episode_steps=1000)
+    gym.make('KukaEnv-v0')
 
     # make job directory
     if not os.path.exists(args.job_dir):

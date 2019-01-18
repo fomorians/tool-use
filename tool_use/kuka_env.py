@@ -29,12 +29,12 @@ class KukaEnv(gym.Env):
             p.connect(p.DIRECT)
 
         self.seed()
-        self.reset()
 
         observation_high = np.array(
             [2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1],
             dtype=np.float32)
-        action_high = np.array([1.0] * 5, dtype=np.float32)
+        action_high = np.array(
+            [0.005, 0.005, 0.005, 0.05, 0.3], dtype=np.float32)
 
         self.observation_space = spaces.Box(
             low=-observation_high, high=+observation_high)
@@ -51,19 +51,20 @@ class KukaEnv(gym.Env):
 
         urdf_root = pybullet_data.getDataPath()
 
-        plane_path = os.path.join(urdf_root, 'plane.urdf')
-        p.loadURDF(plane_path, [0, 0, -1])
-
-        table_path = os.path.join(urdf_root, 'table/table.urdf')
-        p.loadURDF(table_path, 0.5, 0.0, -0.82, 0.0, 0.0, 0.0, 1.0)
-
-        xpos = 0.55 + 0.12 * random.random()
-        ypos = 0 + 0.2 * random.random()
-        ang = np.pi * 0.5 + np.pi * random.random()
-        orn = p.getQuaternionFromEuler([0, 0, ang])
+        block_pos = [
+            0.55 + 0.12 * random.random(), 0 + 0.2 * random.random(), -0.15
+        ]
+        block_pos = [
+            0.4 + 0.4 * random.random(), -0.3 + 0.6 * random.random(),
+            -0.05 + 1.0 * random.random()
+        ]
+        block_orn = p.getQuaternionFromEuler([0, 0, 0])
         block_path = os.path.join(urdf_root, 'block.urdf')
-        self._block_uid = p.loadURDF(block_path, xpos, ypos, -0.15, orn[0],
-                                     orn[1], orn[2], orn[3])
+        self._block_uid = p.loadURDF(
+            fileName=block_path,
+            basePosition=block_pos,
+            baseOrientation=block_orn,
+            useFixedBase=True)
 
         p.setGravity(0, 0, -10)
 
@@ -111,10 +112,7 @@ class KukaEnv(gym.Env):
 
     def step(self, action):
         action = np.clip(action, self.action_space.low, self.action_space.high)
-
-        action_scale = np.array(
-            [0.005, 0.005, 0.005, 0.05, 0.3], dtype=np.float32)
-        self._kuka.applyAction(action * action_scale)
+        self._kuka.applyAction(action)
 
         p.stepSimulation()
 
@@ -122,20 +120,11 @@ class KukaEnv(gym.Env):
             time.sleep(self._time_step)
 
         observation = self._get_observation()
-        done = self._get_done()
         reward = self._reward()
+        done = False
         info = {}
 
         return observation, reward, done, info
-
-    def _get_done(self):
-        block_pos, block_orn = p.getBasePositionAndOrientation(self._block_uid)
-        done = False
-
-        if block_pos[2] > self._reward_height_threshold:
-            done = True
-
-        return done
 
     def _reward(self):
         closest_points = p.getClosestPoints(
@@ -145,16 +134,12 @@ class KukaEnv(gym.Env):
             linkIndexA=-1,
             linkIndexB=self._kuka.kukaEndEffectorIndex)
 
-        reward = 0
+        reward = 0.0
 
         if len(closest_points) > 0:
-            # closest_points = sorted(closest_points, key=lambda point: point[8])
-            closest_distance = closest_points[0][8]
+            closest_point = closest_points[0]
+            closest_distance = closest_point[8]
             reward = -np.square(closest_distance)
-
-        # reward for distance towards target
-        block_pos, block_orn = p.getBasePositionAndOrientation(self._block_uid)
-        reward += min(block_pos[2] - self._reward_height_threshold, 0.0)
 
         return reward
 
