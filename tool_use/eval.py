@@ -23,7 +23,8 @@ def main():
     gym.envs.register(
         id='KukaEnv-v0',
         entry_point='tool_use.kuka_env:KukaEnv',
-        max_episode_steps=1000)
+        max_episode_steps=100,
+        kwargs=dict(render=args.render))
 
     # params
     params = HyperParams(env=args.env, seed=args.seed)

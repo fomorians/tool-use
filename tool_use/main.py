@@ -21,15 +21,25 @@ def main():
     parser.add_argument('--job-dir', required=True)
     parser.add_argument('--env', default='Pendulum-v0')
     parser.add_argument('--seed', default=42, type=int)
+    parser.add_argument('--render', action='store_true')
+    parser.add_argument('--train-iters', default=100, type=int)
     args = parser.parse_args()
     print(args)
+
+    # register kuka env
+    # gym.envs.register(
+    #     id='KukaEnv-v0',
+    #     entry_point='tool_use.kuka_env:KukaEnv',
+    #     max_episode_steps=1000)
+    # gym.make('KukaEnv-v0')
 
     # make job directory
     if not os.path.exists(args.job_dir):
         os.makedirs(args.job_dir)
 
     # params
-    params = HyperParams(env=args.env, seed=args.seed)
+    params = HyperParams(
+        env=args.env, seed=args.seed, train_iters=args.train_iters)
     params_path = os.path.join(args.job_dir, 'params.json')
     params.save(params_path)
     print(params)
@@ -37,9 +47,12 @@ def main():
     # eager
     tf.enable_eager_execution()
 
+    def env_constructor():
+        return gym.make(params.env)
+
     # environment
     env = pyrl.envs.BatchEnv(
-        constructor=lambda: gym.make(params.env),
+        constructor=env_constructor,
         batch_size=params.episodes,
         blocking=False)
 
@@ -99,29 +112,12 @@ def main():
     policy(mock_states, reset_state=True)
     policy_anchor(mock_states, reset_state=True)
 
-    # evaluation
-    states, actions, rewards, next_states, weights = rollout(
-        inference_strategy)
-    episodic_rewards = tf.reduce_mean(
-        tf.reduce_sum(rewards * weights, axis=-1))
-
-    with tf.contrib.summary.always_record_summaries():
-        tf.contrib.summary.scalar('episodic_rewards/eval', episodic_rewards)
-
     for it in trange(params.train_iters):
         # training
         transitions = rollout(exploration_strategy)
         dataset = tf.data.Dataset.from_tensors(transitions)
 
-        # sync variables
-        pynr.training.update_target_variables(
-            source_variables=policy.variables,
-            target_variables=policy_anchor.variables)
-
         for (states, actions, rewards, next_states, weights) in dataset:
-            episodic_rewards = tf.reduce_mean(
-                tf.reduce_sum(rewards * weights, axis=-1))
-
             rewards_moments(rewards, weights=weights, training=True)
             rewards_norm = pynr.math.normalize(
                 rewards,
@@ -143,17 +139,32 @@ def main():
                 discount_factor=params.discount_factor,
                 weights=weights)
 
+            # sync variables
+            pynr.training.update_target_variables(
+                source_variables=policy.variables,
+                target_variables=policy_anchor.variables)
+
             policy_anchor_dist = policy_anchor(states, reset_state=True)
             log_probs_anchor = policy_anchor_dist.log_prob(actions)
 
             with tf.contrib.summary.always_record_summaries():
+                episodic_rewards = tf.reduce_mean(
+                    tf.reduce_sum(rewards, axis=-1))
+
                 tf.contrib.summary.scalar('episodic_rewards/train',
                                           episodic_rewards)
-                tf.contrib.summary.scalar('rewards_moments/mean',
-                                          rewards_moments.mean)
-                tf.contrib.summary.scalar('rewards_moments/std',
-                                          rewards_moments.std)
+                tf.contrib.summary.scalar('rewards/mean', rewards_moments.mean)
+                tf.contrib.summary.scalar('rewards/std', rewards_moments.std)
 
+                for i in range(env.observation_space.shape[0]):
+                    tf.contrib.summary.histogram(f'states/{i}/train',
+                                                 states[..., i])
+                for i in range(env.action_space.shape[0]):
+                    tf.contrib.summary.histogram(f'actions/{i}/train',
+                                                 actions[..., i])
+                tf.contrib.summary.histogram('rewards/train', rewards)
+
+            # training epochs
             for epoch in range(params.epochs):
                 with tf.GradientTape() as tape:
                     # forward passes
@@ -178,42 +189,56 @@ def main():
                         losses=entropy, weights=weights * params.entropy_coef)
                     loss = policy_loss + value_loss + entropy_loss
 
+                # optimization
                 trainable_variables = (
                     policy.trainable_variables + baseline.trainable_variables)
                 grads = tape.gradient(loss, trainable_variables)
-                grads_clipped, grads_norm = tf.clip_by_global_norm(
-                    grads, params.grad_clipping)
-                grads_clipped_norm = tf.global_norm(grads_clipped)
+                if params.grad_clipping is not None:
+                    grads_clipped, _ = tf.clip_by_global_norm(
+                        grads, params.grad_clipping)
                 grads_and_vars = zip(grads_clipped, trainable_variables)
                 optimizer.apply_gradients(
                     grads_and_vars, global_step=global_step)
 
-                kl = tfp.distributions.kl_divergence(policy_dist,
-                                                     policy_anchor_dist)
-                entropy_mean = tf.losses.compute_weighted_loss(
-                    losses=entropy, weights=weights)
-
                 with tf.contrib.summary.always_record_summaries():
-                    tf.contrib.summary.scalar('scale_diag', policy.scale_diag)
-                    tf.contrib.summary.scalar('entropy', entropy_mean)
-                    tf.contrib.summary.scalar('kl', kl)
+                    kl = tfp.distributions.kl_divergence(
+                        policy_dist, policy_anchor_dist)
+                    entropy_mean = tf.losses.compute_weighted_loss(
+                        losses=entropy, weights=weights)
+
                     tf.contrib.summary.scalar('losses/policy', policy_loss)
                     tf.contrib.summary.scalar('losses/value', value_loss)
                     tf.contrib.summary.scalar('losses/entropy', entropy_loss)
-                    tf.contrib.summary.scalar('grads_norm', grads_norm)
-                    tf.contrib.summary.scalar('grads_norm/clipped',
-                                              grads_clipped_norm)
+                    tf.contrib.summary.scalar('losses/loss', loss)
+
+                    tf.contrib.summary.scalar('gradient_norm/unclipped',
+                                              tf.global_norm(grads))
+                    tf.contrib.summary.scalar('gradient_norm',
+                                              tf.global_norm(grads_clipped))
+
+                    tf.contrib.summary.scalar('scale_diag', policy.scale_diag)
+                    tf.contrib.summary.scalar('entropy', entropy_mean)
+                    tf.contrib.summary.scalar('kl', kl)
 
         # evaluation
         if it % params.eval_interval == params.eval_interval - 1:
             states, actions, rewards, next_states, weights = rollout(
                 inference_strategy)
-            episodic_rewards = tf.reduce_mean(
-                tf.reduce_sum(rewards * weights, axis=-1))
 
             with tf.contrib.summary.always_record_summaries():
+                episodic_rewards = tf.reduce_mean(
+                    tf.reduce_sum(rewards, axis=-1))
+
                 tf.contrib.summary.scalar('episodic_rewards/eval',
                                           episodic_rewards)
+
+                for i in range(env.observation_space.shape[0]):
+                    tf.contrib.summary.histogram(f'states/{i}/eval',
+                                                 states[..., i])
+                for i in range(env.action_space.shape[0]):
+                    tf.contrib.summary.histogram(f'actions/{i}/eval',
+                                                 actions[..., i])
+                tf.contrib.summary.histogram('rewards/eval', rewards)
 
             # save checkpoint
             checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')

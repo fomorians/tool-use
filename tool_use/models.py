@@ -36,20 +36,17 @@ class Policy(tf.keras.Model):
         return tf.nn.softplus(self.scale_diag_inverse)
 
     def call(self, inputs, training=None, reset_state=None):
-        high = self.observation_space.high
-        low = self.observation_space.low
-
-        high = tf.where(tf.is_finite(high), high, tf.ones_like(high))
-        low = tf.where(tf.is_finite(low), low, -tf.ones_like(low))
-
-        loc, var = pynr.nn.moments_from_range(low, high)
+        loc, var = pynr.nn.moments_from_range(
+            minval=self.observation_space.low,
+            maxval=self.observation_space.high)
         inputs = pynr.math.normalize(inputs, loc=loc, scale=tf.sqrt(var))
 
         hidden = self.dense1(inputs)
         hidden = self.dense2(hidden)
+        logits = self.dense_loc(hidden)
 
         loc = pynr.math.rescale(
-            self.dense_loc(hidden),
+            logits,
             oldmin=-1.0,
             oldmax=1.0,
             newmin=self.action_space.low,
@@ -81,13 +78,9 @@ class Value(tf.keras.Model):
             units=1, activation=None, kernel_initializer=logits_initializer)
 
     def call(self, inputs, training=None, reset_state=None):
-        high = self.observation_space.high
-        low = self.observation_space.low
-
-        high = tf.where(tf.is_finite(high), high, tf.ones_like(high))
-        low = tf.where(tf.is_finite(low), low, -tf.ones_like(low))
-
-        loc, var = pynr.nn.moments_from_range(low, high)
+        loc, var = pynr.nn.moments_from_range(
+            minval=self.observation_space.low,
+            maxval=self.observation_space.high)
         inputs = pynr.math.normalize(inputs, loc=loc, scale=tf.sqrt(var))
 
         hidden = self.dense1(inputs)

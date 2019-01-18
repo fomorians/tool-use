@@ -6,14 +6,14 @@ import json
 class HyperParams:
     # environment
     env = attr.ib()
-    seed = attr.ib()
+    seed = attr.ib(default=42)
 
     # training
-    eval_interval = attr.ib(default=10)
+    train_iters = attr.ib(default=100)
     episodes = attr.ib(default=10)
     epochs = attr.ib(default=10)
+    eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)
-    train_iters = attr.ib(default=100)
 
     # losses
     value_coef = attr.ib(default=1e-3)

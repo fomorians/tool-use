@@ -31,13 +31,14 @@ class KukaEnv(gym.Env):
         self.seed()
         self.reset()
 
-        observation_size = len(self._get_observation())
-        observation_high = np.array([100] * observation_size)
-        action_high = np.array([1] * 5)
+        observation_high = np.array(
+            [2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1],
+            dtype=np.float32)
+        action_high = np.array([1.0] * 5, dtype=np.float32)
 
         self.observation_space = spaces.Box(
             low=-observation_high, high=+observation_high)
-        self.action_space = spaces.Box(low=-action_high, high=action_high)
+        self.action_space = spaces.Box(low=-action_high, high=+action_high)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -100,18 +101,21 @@ class KukaEnv(gym.Env):
             inv_gripper_pos, inv_gripper_orn, block_pos, block_orn)
         block_euler_in_gripper = p.getEulerFromQuaternion(block_orn_in_gripper)
 
-        for pos in block_pos_in_gripper:
-            observation.append(pos)
+        observation.extend(list(block_pos_in_gripper))
 
         for angle in block_euler_in_gripper:
             observation.append(np.cos(angle))
             observation.append(np.sin(angle))
 
-        return np.array(observation)
+        return np.array(observation, dtype=np.float32)
 
     def step(self, action):
-        action_scale = np.array([0.005, 0.005, 0.005, 0.05, 0.3])
+        action = np.clip(action, self.action_space.low, self.action_space.high)
+
+        action_scale = np.array(
+            [0.005, 0.005, 0.005, 0.05, 0.3], dtype=np.float32)
         self._kuka.applyAction(action * action_scale)
+
         p.stepSimulation()
 
         if self._render:
@@ -134,19 +138,23 @@ class KukaEnv(gym.Env):
         return done
 
     def _reward(self):
-        block_pos, block_orn = p.getBasePositionAndOrientation(self._block_uid)
-        closest_points = p.getClosestPoints(self._block_uid,
-                                            self._kuka.kukaUid, 1000, -1,
-                                            self._kuka.kukaEndEffectorIndex)
+        closest_points = p.getClosestPoints(
+            bodyA=self._block_uid,
+            bodyB=self._kuka.kukaUid,
+            distance=1000,
+            linkIndexA=-1,
+            linkIndexB=self._kuka.kukaEndEffectorIndex)
 
         reward = 0
 
         if len(closest_points) > 0:
-            closest_dist = np.square(closest_points[0][8])
-            reward = -closest_dist
+            # closest_points = sorted(closest_points, key=lambda point: point[8])
+            closest_distance = closest_points[0][8]
+            reward = -np.square(closest_distance)
 
-        if block_pos[2] > self._reward_height_threshold:
-            reward = 100
+        # reward for distance towards target
+        block_pos, block_orn = p.getBasePositionAndOrientation(self._block_uid)
+        reward += min(block_pos[2] - self._reward_height_threshold, 0.0)
 
         return reward
 
