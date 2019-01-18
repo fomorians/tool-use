@@ -4,6 +4,23 @@ import tensorflow.contrib.eager as tfe
 import tensorflow_probability as tfp
 
 
+class SquashedMultivariateNormalDiag(tfp.distributions.MultivariateNormalDiag):
+    def mode(self):
+        mode = super(SquashedMultivariateNormalDiag, self).mode()
+        return tf.tanh(mode)
+
+    def sample(self):
+        sample = super(SquashedMultivariateNormalDiag, self).sample()
+        return tf.tanh(sample)
+
+    def log_prob(self, value):
+        raw_value = tf.atanh(value)
+        log_probs = super(SquashedMultivariateNormalDiag,
+                          self).log_prob(raw_value)
+        log_probs -= tf.reduce_sum(tf.log(1 - value**2 + 1e-6), axis=-1) + 1e-6
+        return log_probs
+
+
 class Policy(tf.keras.Model):
     def __init__(self, observation_space, action_space, scale, **kwargs):
         super(Policy, self).__init__(**kwargs)
@@ -26,7 +43,7 @@ class Policy(tf.keras.Model):
 
         self.dense_loc = tf.keras.layers.Dense(
             units=self.action_space.shape[0],
-            activation=tf.tanh,
+            activation=None,
             kernel_initializer=logits_initializer)
         self.scale_diag_inverse = tfe.Variable(
             scale_initializer(self.action_space.shape), trainable=True)
@@ -43,14 +60,7 @@ class Policy(tf.keras.Model):
 
         hidden = self.dense1(inputs)
         hidden = self.dense2(hidden)
-        logits = self.dense_loc(hidden)
-
-        loc = pynr.math.rescale(
-            logits,
-            oldmin=-1.0,
-            oldmax=1.0,
-            newmin=self.action_space.low,
-            newmax=self.action_space.high)
+        loc = self.dense_loc(hidden)
 
         dist = tfp.distributions.MultivariateNormalDiag(
             loc=loc, scale_diag=self.scale_diag)

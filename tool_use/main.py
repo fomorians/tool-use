@@ -16,6 +16,27 @@ from tool_use.params import HyperParams
 from tool_use.parallel_rollout import ParallelRollout
 
 
+class RangeNormalize:
+    def __init__(self, env):
+        self.env = env
+
+    def __getattr__(self, name):
+        return getattr(self.env, name)
+
+    @property
+    def action_space(self):
+        action_space = self.env.action_space
+        low = -np.ones(shape=action_space.shape, dtype=action_space.dtype)
+        high = np.ones(shape=action_space.shape, dtype=action_space.dtype)
+        return gym.spaces.Box(low, high, dtype=np.float32)
+
+    def step(self, action):
+        low = self.env.action_space.low
+        high = self.env.action_space.high
+        action = (action + 1) / 2 * (high - low) + low
+        return self.env.step(action)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
@@ -48,7 +69,9 @@ def main():
     tf.enable_eager_execution()
 
     def env_constructor():
-        return gym.make(params.env)
+        env = gym.make(params.env)
+        env = RangeNormalize(env)
+        return env
 
     # environment
     env = pyrl.envs.BatchEnv(
