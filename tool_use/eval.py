@@ -24,7 +24,7 @@ def main():
         id='KukaEnv-v0',
         entry_point='tool_use.kuka_env:KukaEnv',
         max_episode_steps=1000,
-        kwargs=dict(render=args.render))
+        kwargs=dict(should_render=args.render))
 
     # params
     params = HyperParams(env=args.env, seed=args.seed)

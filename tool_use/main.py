@@ -4,19 +4,18 @@ import random
 import argparse
 import numpy as np
 import tensorflow as tf
+import tensorflow.contrib.eager as tfe
 import tensorflow_probability as tfp
 
 import pyoneer as pynr
 import pyoneer.rl as pyrl
-
-from tqdm import trange
 
 from tool_use.models import Policy, Value
 from tool_use.params import HyperParams
 from tool_use.parallel_rollout import ParallelRollout
 
 
-class RangeNormalize:
+class ActionRangeNormalize:
     def __init__(self, env):
         self.env = env
 
@@ -70,7 +69,7 @@ def main():
 
     def env_constructor():
         env = gym.make(params.env)
-        env = RangeNormalize(env)
+        env = ActionRangeNormalize(env)
         return env
 
     # environment
@@ -135,10 +134,15 @@ def main():
     policy(mock_states, reset_state=True)
     policy_anchor(mock_states, reset_state=True)
 
-    for it in trange(params.train_iters):
+    for it in range(params.train_iters):
         # training
-        transitions = rollout(exploration_strategy)
-        dataset = tf.data.Dataset.from_tensors(transitions)
+        with tf.device('cpu:0'):
+            transitions = rollout(exploration_strategy)
+            dataset = tf.data.Dataset.from_tensors(transitions)
+
+        if tfe.num_gpus() > 0:
+            dataset = dataset.apply(
+                tf.data.experimental.prefetch_to_device('gpu:0'))
 
         for (states, actions, rewards, next_states, weights) in dataset:
             rewards_moments(rewards, weights=weights, training=True)
@@ -180,10 +184,10 @@ def main():
                 tf.contrib.summary.scalar('rewards/std', rewards_moments.std)
 
                 for i in range(env.observation_space.shape[0]):
-                    tf.contrib.summary.histogram(f'states/{i}/train',
+                    tf.contrib.summary.histogram('states/{}/train'.format(i),
                                                  states[..., i])
                 for i in range(env.action_space.shape[0]):
-                    tf.contrib.summary.histogram(f'actions/{i}/train',
+                    tf.contrib.summary.histogram('actions/{}/train'.format(i),
                                                  actions[..., i])
                 tf.contrib.summary.histogram('rewards/train', rewards)
 
@@ -245,8 +249,9 @@ def main():
 
         # evaluation
         if it % params.eval_interval == params.eval_interval - 1:
-            states, actions, rewards, next_states, weights = rollout(
-                inference_strategy)
+            with tf.device('cpu:0'):
+                states, actions, rewards, next_states, weights = rollout(
+                    inference_strategy)
 
             with tf.contrib.summary.always_record_summaries():
                 episodic_rewards = tf.reduce_mean(
@@ -256,10 +261,10 @@ def main():
                                           episodic_rewards)
 
                 for i in range(env.observation_space.shape[0]):
-                    tf.contrib.summary.histogram(f'states/{i}/eval',
+                    tf.contrib.summary.histogram('states/{}/eval'.format(i),
                                                  states[..., i])
                 for i in range(env.action_space.shape[0]):
-                    tf.contrib.summary.histogram(f'actions/{i}/eval',
+                    tf.contrib.summary.histogram('actions/{}/eval'.format(i),
                                                  actions[..., i])
                 tf.contrib.summary.histogram('rewards/eval', rewards)
 

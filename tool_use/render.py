@@ -13,18 +13,25 @@ def main():
         id='KukaEnv-v0',
         entry_point='tool_use.kuka_env:KukaEnv',
         max_episode_steps=1000,
-        kwargs=dict(render=True))
+        kwargs=dict(should_render=True))
 
     env = gym.make(args.env)
-    for _ in range(args.episodes):
-        env.reset()
-        for _ in range(env.spec.max_episode_steps):
+
+    for episode in range(args.episodes):
+        state = env.reset()
+
+        for step in range(env.spec.max_episode_steps):
             if args.env != 'KukaEnv-v0':
                 env.render()
 
             action = env.action_space.sample()
-            _, reward, _, _ = env.step(action)
+            next_state, reward, done, info = env.step(action)
             print(reward)
+
+            if done:
+                break
+
+            state = next_state
 
 
 if __name__ == '__main__':

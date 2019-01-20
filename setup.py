@@ -6,6 +6,7 @@ REQUIRED_PACKAGES = [
     'gym',
     'attrs',
     'pyoneer',
+    'pybullet',
 ]
 
 setup(

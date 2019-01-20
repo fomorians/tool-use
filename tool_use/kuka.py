@@ -61,7 +61,7 @@ class Kuka:
 
         self.num_joints = p.getNumJoints(bodyUniqueId=self.kuka_id)
         self.joint_indices = list(range(self.num_joints))
-        self.max_force = 300
+        self.max_force = 500  # NOTE: originally 300
         self.max_velocity = 10
         self.end_effector_index = 6
 
@@ -93,4 +93,4 @@ class Kuka:
             jointIndices=self.joint_indices,
             controlMode=p.VELOCITY_CONTROL,
             targetVelocities=joint_velocities,
-            forces=[self.max_force] * 7)
+            forces=[self.max_force] * self.num_joints)

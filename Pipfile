@@ -4,18 +4,18 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-tensorflow = "*"
+attrs = "*"
 gym = {extras = ["box2d"], version = "*"}
 pybullet = "*"
-attrs = "*"
-tqdm = "*"
 pyoneer = {editable = true, path = "/Users/fomoro/Documents/pyoneer"}
+tensorflow = "*"
 
 [dev-packages]
 jupyterlab = "*"
 matplotlib = "*"
 seaborn = "*"
 ipdb = "*"
+tqdm = "*"
 
 [requires]
 python_version = "3.6"

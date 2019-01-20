@@ -11,13 +11,13 @@ class HyperParams:
     # training
     train_iters = attr.ib(default=100)
     episodes = attr.ib(default=10)
-    epochs = attr.ib(default=10)
+    epochs = attr.ib(default=10)  # NOTE: originally 10
     eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)
 
     # losses
     value_coef = attr.ib(default=1e-3)
-    entropy_coef = attr.ib(default=0.05)
+    entropy_coef = attr.ib(default=1e-3)
 
     # optimization
     learning_rate = attr.ib(default=1e-3)
@@ -25,9 +25,9 @@ class HyperParams:
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)
-    discount_factor = attr.ib(default=0.99)
+    discount_factor = attr.ib(default=0.995)
     lambda_factor = attr.ib(default=0.95)
-    scale = attr.ib(default=1.0)
+    scale = attr.ib(default=0.5)
 
     def save(self, path):
         with open(path, 'w') as fp:

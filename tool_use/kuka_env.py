@@ -4,8 +4,6 @@ import time
 import numpy as np
 import pybullet as p
 
-from tqdm import trange
-
 from gym import spaces
 from gym.utils import seeding
 
@@ -38,20 +36,45 @@ class KukaEnv(gym.Env):
 
         self.seed()
 
-        joint_position_high = [
-            2.96705972839, 2.09439510239, 2.96705972839, 2.09439510239,
-            2.96705972839, 2.09439510239, 3.05432619099
-        ]
-        joint_velocity_high = [10] * 7
-        joint_torque_high = [300] * 7
-        observation_high = np.array(
-            joint_position_high + joint_velocity_high + joint_torque_high,
+        max_velocity = 10
+        num_joints = 7
+        max_force = 500  # NOTE: originally 300
+
+        joint_position_high = np.array(
+            [
+                2.96705972839, 2.09439510239, 2.96705972839, 2.09439510239,
+                2.96705972839, 2.09439510239, 3.05432619099
+            ],
             dtype=np.float32)
-        action_high = np.array([10, 10, 10, 10, 10, 10, 10], dtype=np.float32)
+        joint_position_low = -joint_position_high
+
+        joint_velocity_high = np.full(
+            shape=7, fill_value=max_velocity, dtype=np.float32)
+        joint_velocity_low = -joint_position_high
+
+        joint_torque_high = np.full(
+            shape=7, fill_value=max_force, dtype=np.float32)
+        joint_torque_low = -joint_torque_high
+
+        goal_pos_high = np.array([0.8, 0.8, 1.0], dtype=np.float32)
+        goal_pos_low = np.array([0.3, 0.3, 0.2], dtype=np.float32)
+
+        observation_high = np.concatenate([
+            joint_position_high, joint_velocity_high, joint_torque_high,
+            goal_pos_high
+        ])
+        observation_low = np.concatenate([
+            joint_position_low, joint_velocity_low, joint_torque_low,
+            goal_pos_low
+        ])
+
+        action_high = np.full(
+            shape=num_joints, fill_value=max_velocity, dtype=np.float32)
+        action_low = -action_high
 
         self.observation_space = spaces.Box(
-            low=-observation_high, high=+observation_high)
-        self.action_space = spaces.Box(low=-action_high, high=+action_high)
+            low=observation_low, high=observation_high)
+        self.action_space = spaces.Box(low=action_low, high=action_high)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -67,36 +90,35 @@ class KukaEnv(gym.Env):
             basePosition=[0, 0, -0.05],
             useFixedBase=True)
 
-        # load randomly positioned/oriented block
-        block_path = os.path.join(self.data_path, 'cube.urdf')
-        block_pos_angle = np.random.sample() * np.pi * 2
-        block_pos_size = np.random.uniform(0.3, 0.8)
-        block_pos_height = np.random.uniform(0.2, 1.0)
-        block_pos = [
-            np.cos(block_pos_angle) * block_pos_size,
-            np.sin(block_pos_angle) * block_pos_size,
-            block_pos_height,
+        # load randomly positioned/oriented goal
+        goal_path = os.path.join(self.data_path, 'cube.urdf')
+        goal_pos_angle = np.random.sample() * np.pi * 2
+        goal_pos_size = np.random.uniform(0.3, 0.8)
+        goal_pos_height = np.random.uniform(0.2, 1.0)
+        goal_pos = [
+            np.cos(goal_pos_angle) * goal_pos_size,
+            np.sin(goal_pos_angle) * goal_pos_size,
+            goal_pos_height,
         ]
-        block_orn = p.getQuaternionFromEuler([
+        goal_orn = p.getQuaternionFromEuler([
             np.random.uniform(-np.pi, np.pi),
             np.random.uniform(-np.pi, np.pi),
             np.random.uniform(-np.pi, np.pi),
         ])
-        self.block_id = p.loadURDF(
-            fileName=block_path,
-            basePosition=block_pos,
-            baseOrientation=block_orn,
+        self.goal_id = p.loadURDF(
+            fileName=goal_path,
+            basePosition=goal_pos,
+            baseOrientation=goal_orn,
             useFixedBase=True)
 
         # load kuka arm
         self.kuka = Kuka()
 
         target_values = [
-            np.random.uniform(joint_info.jointLowerLimit,
-                              joint_info.jointUpperLimit)
+            np.random.uniform(joint_info.jointLowerLimit / 2,
+                              joint_info.jointUpperLimit / 2)
             for joint_info in self.kuka.get_joint_info()
         ]
-        target_values = [0 for joint_index in range(self.kuka.num_joints)]
         self.kuka.reset_joint_states(target_values)
 
         p.setGravity(0, 0, self.gravity)
@@ -113,19 +135,20 @@ class KukaEnv(gym.Env):
                          joint_state.appliedJointMotorTorque)
                         for joint_state in self.kuka.get_joint_state()]
         joint_positions, joint_velocities, joint_torques = zip(*joint_states)
+        goal_pos, goal_orn = p.getBasePositionAndOrientation(self.goal_id)
         observation = np.array(
-            joint_positions + joint_velocities + joint_torques,
+            joint_positions + joint_velocities + joint_torques + goal_pos,
             dtype=self.observation_space.dtype)
         return observation
 
     def _get_reward(self):
-        block_pos, block_orn = p.getBasePositionAndOrientation(self.block_id)
+        goal_pos, goal_orn = p.getBasePositionAndOrientation(self.goal_id)
 
         end_state = p.getLinkState(self.kuka.kuka_id,
                                    self.kuka.end_effector_index)
         end_pos = end_state[4]
 
-        reward = -np.sum(np.square(np.array(end_pos) - np.array(block_pos)))
+        reward = -np.sum(np.square(np.array(end_pos) - np.array(goal_pos)))
         return reward
 
     def step(self, action):
