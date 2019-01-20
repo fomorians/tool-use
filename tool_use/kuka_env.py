@@ -1,40 +1,53 @@
 import os
 import gym
 import time
-import random
 import numpy as np
 import pybullet as p
-import pybullet_data
+
+from tqdm import trange
 
 from gym import spaces
 from gym.utils import seeding
 
-from pybullet_envs.bullet.kuka import Kuka
+from tool_use.kuka import Kuka
 
 
 class KukaEnv(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
 
-    def __init__(self, render=False):
-        self._reward_height_threshold = 0.2
-        self._time_step = 1 / 240
-        self._render = render
+    def __init__(self, should_render=False):
+        self.should_render = should_render
+        self.time_step = 1 / 240
+        self.gravity = -9.8
 
-        if self._render:
-            cid = p.connect(p.SHARED_MEMORY)
-            if cid < 0:
-                cid = p.connect(p.GUI)
-            p.resetDebugVisualizerCamera(1.3, 180, -41, [0.52, -0.2, -0.33])
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        self.data_path = os.path.abspath(
+            os.path.join(dir_path, os.pardir, 'data'))
+
+        if self.should_render:
+            p.connect(p.GUI)
+            p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, False)
+            p.configureDebugVisualizer(p.COV_ENABLE_GUI, False)
+            p.resetDebugVisualizerCamera(
+                cameraDistance=2.0,
+                cameraYaw=-75,
+                cameraPitch=-35,
+                cameraTargetPosition=[0, 0, 0])
         else:
             p.connect(p.DIRECT)
 
         self.seed()
 
+        joint_position_high = [
+            2.96705972839, 2.09439510239, 2.96705972839, 2.09439510239,
+            2.96705972839, 2.09439510239, 3.05432619099
+        ]
+        joint_velocity_high = [10] * 7
+        joint_torque_high = [300] * 7
         observation_high = np.array(
-            [2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1, 1, 1],
+            joint_position_high + joint_velocity_high + joint_torque_high,
             dtype=np.float32)
-        action_high = np.array(
-            [0.005, 0.005, 0.005, 0.05, 0.3], dtype=np.float32)
+        action_high = np.array([10, 10, 10, 10, 10, 10, 10], dtype=np.float32)
 
         self.observation_space = spaces.Box(
             low=-observation_high, high=+observation_high)
@@ -46,102 +59,110 @@ class KukaEnv(gym.Env):
 
     def reset(self):
         p.resetSimulation()
-        p.setPhysicsEngineParameter(numSolverIterations=150)
-        p.setTimeStep(self._time_step)
+        p.setTimeStep(self.time_step)
 
-        urdf_root = pybullet_data.getDataPath()
+        # load ground plane
+        p.loadURDF(
+            os.path.join(self.data_path, 'plane.urdf'),
+            basePosition=[0, 0, -0.05],
+            useFixedBase=True)
 
+        # load randomly positioned/oriented block
+        block_path = os.path.join(self.data_path, 'cube.urdf')
+        block_pos_angle = np.random.sample() * np.pi * 2
+        block_pos_size = np.random.uniform(0.3, 0.8)
+        block_pos_height = np.random.uniform(0.2, 1.0)
         block_pos = [
-            0.55 + 0.12 * random.random(), 0 + 0.2 * random.random(), -0.15
+            np.cos(block_pos_angle) * block_pos_size,
+            np.sin(block_pos_angle) * block_pos_size,
+            block_pos_height,
         ]
-        block_pos = [
-            0.4 + 0.4 * random.random(), -0.3 + 0.6 * random.random(),
-            -0.05 + 1.0 * random.random()
-        ]
-        block_orn = p.getQuaternionFromEuler([0, 0, 0])
-        block_path = os.path.join(urdf_root, 'block.urdf')
-        self._block_uid = p.loadURDF(
+        block_orn = p.getQuaternionFromEuler([
+            np.random.uniform(-np.pi, np.pi),
+            np.random.uniform(-np.pi, np.pi),
+            np.random.uniform(-np.pi, np.pi),
+        ])
+        self.block_id = p.loadURDF(
             fileName=block_path,
             basePosition=block_pos,
             baseOrientation=block_orn,
             useFixedBase=True)
 
-        p.setGravity(0, 0, -10)
+        # load kuka arm
+        self.kuka = Kuka()
 
-        self._kuka = Kuka(urdfRootPath=urdf_root, timeStep=self._time_step)
+        target_values = [
+            np.random.uniform(joint_info.jointLowerLimit,
+                              joint_info.jointUpperLimit)
+            for joint_info in self.kuka.get_joint_info()
+        ]
+        target_values = [0 for joint_index in range(self.kuka.num_joints)]
+        self.kuka.reset_joint_states(target_values)
 
+        p.setGravity(0, 0, self.gravity)
         p.stepSimulation()
+
+        if self.should_render:
+            p.configureDebugVisualizer(p.COV_ENABLE_RENDERING, True)
 
         observation = self._get_observation()
         return observation
 
     def _get_observation(self):
-        observation = []
+        joint_states = [(joint_state.jointPosition, joint_state.jointVelocity,
+                         joint_state.appliedJointMotorTorque)
+                        for joint_state in self.kuka.get_joint_state()]
+        joint_positions, joint_velocities, joint_torques = zip(*joint_states)
+        observation = np.array(
+            joint_positions + joint_velocities + joint_torques,
+            dtype=self.observation_space.dtype)
+        return observation
 
-        state = p.getLinkState(self._kuka.kukaUid, self._kuka.kukaGripperIndex)
-        pos = state[0]
-        orn = state[1]
-        euler = p.getEulerFromQuaternion(orn)
+    def _get_reward(self):
+        block_pos, block_orn = p.getBasePositionAndOrientation(self.block_id)
 
-        observation.extend(list(pos))
+        end_state = p.getLinkState(self.kuka.kuka_id,
+                                   self.kuka.end_effector_index)
+        end_pos = end_state[4]
 
-        for angle in list(euler):
-            observation.append(np.cos(angle))
-            observation.append(np.sin(angle))
-
-        gripper_state = p.getLinkState(self._kuka.kukaUid,
-                                       self._kuka.kukaGripperIndex)
-        gripper_pos = gripper_state[0]
-        gripper_orn = gripper_state[1]
-        block_pos, block_orn = p.getBasePositionAndOrientation(self._block_uid)
-
-        inv_gripper_pos, inv_gripper_orn = p.invertTransform(
-            gripper_pos, gripper_orn)
-
-        block_pos_in_gripper, block_orn_in_gripper = p.multiplyTransforms(
-            inv_gripper_pos, inv_gripper_orn, block_pos, block_orn)
-        block_euler_in_gripper = p.getEulerFromQuaternion(block_orn_in_gripper)
-
-        observation.extend(list(block_pos_in_gripper))
-
-        for angle in block_euler_in_gripper:
-            observation.append(np.cos(angle))
-            observation.append(np.sin(angle))
-
-        return np.array(observation, dtype=np.float32)
+        reward = -np.sum(np.square(np.array(end_pos) - np.array(block_pos)))
+        return reward
 
     def step(self, action):
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        self._kuka.applyAction(action)
+        self.kuka.apply_joint_velocities(action)
 
         p.stepSimulation()
 
-        if self._render:
-            time.sleep(self._time_step)
+        if self.should_render:
+            time.sleep(self.time_step)
 
         observation = self._get_observation()
-        reward = self._reward()
+        reward = self._get_reward()
         done = False
         info = {}
 
         return observation, reward, done, info
 
-    def _reward(self):
-        closest_points = p.getClosestPoints(
-            bodyA=self._block_uid,
-            bodyB=self._kuka.kukaUid,
-            distance=1000,
-            linkIndexA=-1,
-            linkIndexB=self._kuka.kukaEndEffectorIndex)
-
-        reward = 0.0
-
-        if len(closest_points) > 0:
-            closest_point = closest_points[0]
-            closest_distance = closest_point[8]
-            reward = -np.square(closest_distance)
-
-        return reward
-
     def __del__(self):
         p.disconnect()
+
+
+def main():
+    env = KukaEnv(should_render=True)
+
+    episodes = 100
+    max_episode_steps = 1000
+
+    for episode in trange(episodes):
+        state = env.reset()
+        for step in range(max_episode_steps):
+            action = env.action_space.sample()
+            next_state, reward, done, info = env.step(action)
+            if done:
+                break
+            state = next_state
+
+
+if __name__ == '__main__':
+    main()
