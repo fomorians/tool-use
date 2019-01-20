@@ -10,8 +10,9 @@ class HyperParams:
 
     # training
     train_iters = attr.ib(default=100)
-    episodes = attr.ib(default=10)
-    epochs = attr.ib(default=10)  # NOTE: originally 10
+    episodes = attr.ib(default=8)
+    epochs = attr.ib(default=10)
+    batch_size = attr.ib(default=2)
     eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)
 
@@ -20,12 +21,12 @@ class HyperParams:
     entropy_coef = attr.ib(default=1e-3)
 
     # optimization
-    learning_rate = attr.ib(default=1e-3)
+    learning_rate = attr.ib(default=3e-4)
     grad_clipping = attr.ib(default=10.0)
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)
-    discount_factor = attr.ib(default=0.995)
+    discount_factor = attr.ib(default=0.99)
     lambda_factor = attr.ib(default=0.95)
     scale = attr.ib(default=0.5)
 

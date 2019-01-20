@@ -43,6 +43,7 @@ def main():
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--render', action='store_true')
     parser.add_argument('--train-iters', default=100, type=int)
+    parser.add_argument('--include-histograms', action='store_true')
     args = parser.parse_args()
     print(args)
 
@@ -134,23 +135,27 @@ def main():
     policy(mock_states, reset_state=True)
     policy_anchor(mock_states, reset_state=True)
 
+    # sync variables
+    pynr.training.update_target_variables(
+        source_variables=policy.variables,
+        target_variables=policy_anchor.variables)
+
     for it in range(params.train_iters):
+        print('iteration:', it)
+
         # training
         with tf.device('cpu:0'):
-            transitions = rollout(exploration_strategy)
-            dataset = tf.data.Dataset.from_tensors(transitions)
+            states, actions, rewards, next_states, weights = rollout(
+                exploration_strategy)
 
-        if tfe.num_gpus() > 0:
-            dataset = dataset.apply(
-                tf.data.experimental.prefetch_to_device('gpu:0'))
-
-        for (states, actions, rewards, next_states, weights) in dataset:
             rewards_moments(rewards, weights=weights, training=True)
-            rewards_norm = pynr.math.normalize(
-                rewards,
-                loc=rewards_moments.mean,
-                scale=rewards_moments.std,
-                weights=weights)
+
+            rewards_norm = pynr.math.safe_divide(rewards, rewards_moments.std)
+            # rewards_norm = pynr.math.normalize(
+            #     rewards,
+            #     loc=rewards_moments.mean,
+            #     scale=rewards_moments.std,
+            #     weights=weights)
 
             values_target = baseline(states, reset_state=True)
 
@@ -166,86 +171,95 @@ def main():
                 discount_factor=params.discount_factor,
                 weights=weights)
 
-            # sync variables
-            pynr.training.update_target_variables(
-                source_variables=policy.variables,
-                target_variables=policy_anchor.variables)
-
-            policy_anchor_dist = policy_anchor(states, reset_state=True)
-            log_probs_anchor = policy_anchor_dist.log_prob(actions)
+            episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
 
             with tf.contrib.summary.always_record_summaries():
-                episodic_rewards = tf.reduce_mean(
-                    tf.reduce_sum(rewards, axis=-1))
-
                 tf.contrib.summary.scalar('episodic_rewards/train',
                                           episodic_rewards)
                 tf.contrib.summary.scalar('rewards/mean', rewards_moments.mean)
                 tf.contrib.summary.scalar('rewards/std', rewards_moments.std)
 
-                for i in range(env.observation_space.shape[0]):
-                    tf.contrib.summary.histogram('states/{}/train'.format(i),
-                                                 states[..., i])
-                for i in range(env.action_space.shape[0]):
-                    tf.contrib.summary.histogram('actions/{}/train'.format(i),
-                                                 actions[..., i])
-                tf.contrib.summary.histogram('rewards/train', rewards)
+                if args.include_histograms:
+                    for i in range(env.observation_space.shape[0]):
+                        tf.contrib.summary.histogram(
+                            'states/{}/train'.format(i), states[..., i])
+                    for i in range(env.action_space.shape[0]):
+                        tf.contrib.summary.histogram(
+                            'actions/{}/train'.format(i), actions[..., i])
+                    tf.contrib.summary.histogram('rewards/train', rewards)
+                    tf.contrib.summary.histogram('rewards_norm/train', rewards)
+                    tf.contrib.summary.histogram('rewards_norm/train',
+                                                 rewards_norm)
+                    tf.contrib.summary.histogram('advantages/train',
+                                                 advantages)
+                    tf.contrib.summary.histogram('returns/train', returns)
 
-            # training epochs
-            for epoch in range(params.epochs):
-                with tf.GradientTape() as tape:
-                    # forward passes
-                    policy_dist = policy(
-                        states, training=True, reset_state=True)
-                    log_probs = policy_dist.log_prob(actions)
-                    entropy = policy_dist.entropy()
-                    values = baseline(states, training=True, reset_state=True)
+            policy_anchor_dist = policy_anchor(states, reset_state=True)
+            log_probs_anchor = policy_anchor_dist.log_prob(actions)
 
-                    # losses
-                    policy_loss = pyrl.losses.clipped_policy_gradient_loss(
-                        log_probs=log_probs,
-                        log_probs_anchor=log_probs_anchor,
-                        advantages=advantages,
-                        epsilon_clipping=params.epsilon_clipping,
-                        weights=weights)
-                    value_loss = tf.losses.mean_squared_error(
-                        predictions=values,
-                        labels=returns,
-                        weights=weights * params.value_coef)
-                    entropy_loss = -tf.losses.compute_weighted_loss(
-                        losses=entropy, weights=weights * params.entropy_coef)
-                    loss = policy_loss + value_loss + entropy_loss
+            dataset = tf.data.Dataset.from_tensors(
+                (states, actions, rewards_norm, advantages, returns,
+                 log_probs_anchor, weights))
+            dataset = dataset.batch(params.batch_size)
+            dataset = dataset.repeat(params.epochs)
 
-                # optimization
-                trainable_variables = (
-                    policy.trainable_variables + baseline.trainable_variables)
-                grads = tape.gradient(loss, trainable_variables)
-                if params.grad_clipping is not None:
-                    grads_clipped, _ = tf.clip_by_global_norm(
-                        grads, params.grad_clipping)
-                grads_and_vars = zip(grads_clipped, trainable_variables)
-                optimizer.apply_gradients(
-                    grads_and_vars, global_step=global_step)
+        if tfe.num_gpus() > 0:
+            dataset = dataset.apply(
+                tf.data.experimental.prefetch_to_device('gpu:0'))
 
-                with tf.contrib.summary.always_record_summaries():
-                    kl = tfp.distributions.kl_divergence(
-                        policy_dist, policy_anchor_dist)
-                    entropy_mean = tf.losses.compute_weighted_loss(
-                        losses=entropy, weights=weights)
+        for (states, actions, rewards_norm, advantages, returns,
+             log_probs_anchor, weights) in dataset:
+            with tf.GradientTape() as tape:
+                # forward passes
+                policy_dist = policy(states, training=True, reset_state=True)
+                log_probs = policy_dist.log_prob(actions)
+                entropy = policy_dist.entropy()
+                values = baseline(states, training=True, reset_state=True)
 
-                    tf.contrib.summary.scalar('losses/policy', policy_loss)
-                    tf.contrib.summary.scalar('losses/value', value_loss)
-                    tf.contrib.summary.scalar('losses/entropy', entropy_loss)
-                    tf.contrib.summary.scalar('losses/loss', loss)
+                # losses
+                policy_loss = pyrl.losses.clipped_policy_gradient_loss(
+                    log_probs=log_probs,
+                    log_probs_anchor=log_probs_anchor,
+                    advantages=advantages,
+                    epsilon_clipping=params.epsilon_clipping,
+                    weights=weights)
+                value_loss = tf.losses.mean_squared_error(
+                    predictions=values,
+                    labels=returns,
+                    weights=weights * params.value_coef)
+                entropy_loss = -tf.losses.compute_weighted_loss(
+                    losses=entropy, weights=weights * params.entropy_coef)
+                loss = policy_loss + value_loss + entropy_loss
 
-                    tf.contrib.summary.scalar('gradient_norm/unclipped',
-                                              tf.global_norm(grads))
-                    tf.contrib.summary.scalar('gradient_norm',
-                                              tf.global_norm(grads_clipped))
+            # optimization
+            trainable_variables = (
+                policy.trainable_variables + baseline.trainable_variables)
+            grads = tape.gradient(loss, trainable_variables)
+            if params.grad_clipping is not None:
+                grads_clipped, _ = tf.clip_by_global_norm(
+                    grads, params.grad_clipping)
+            grads_and_vars = zip(grads_clipped, trainable_variables)
+            optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
-                    tf.contrib.summary.scalar('scale_diag', policy.scale_diag)
-                    tf.contrib.summary.scalar('entropy', entropy_mean)
-                    tf.contrib.summary.scalar('kl', kl)
+            with tf.contrib.summary.always_record_summaries():
+                kl = tfp.distributions.kl_divergence(policy_dist,
+                                                     policy_anchor_dist)
+                entropy_mean = tf.losses.compute_weighted_loss(
+                    losses=entropy, weights=weights)
+
+                tf.contrib.summary.scalar('losses/policy', policy_loss)
+                tf.contrib.summary.scalar('losses/value', value_loss)
+                tf.contrib.summary.scalar('losses/entropy', entropy_loss)
+                tf.contrib.summary.scalar('losses/loss', loss)
+
+                tf.contrib.summary.scalar('gradient_norm/unclipped',
+                                          tf.global_norm(grads))
+                tf.contrib.summary.scalar('gradient_norm',
+                                          tf.global_norm(grads_clipped))
+
+                tf.contrib.summary.scalar('scale_diag', policy.scale_diag)
+                tf.contrib.summary.scalar('entropy', entropy_mean)
+                tf.contrib.summary.scalar('kl', kl)
 
         # evaluation
         if it % params.eval_interval == params.eval_interval - 1:
@@ -260,17 +274,23 @@ def main():
                 tf.contrib.summary.scalar('episodic_rewards/eval',
                                           episodic_rewards)
 
-                for i in range(env.observation_space.shape[0]):
-                    tf.contrib.summary.histogram('states/{}/eval'.format(i),
-                                                 states[..., i])
-                for i in range(env.action_space.shape[0]):
-                    tf.contrib.summary.histogram('actions/{}/eval'.format(i),
-                                                 actions[..., i])
-                tf.contrib.summary.histogram('rewards/eval', rewards)
+                if args.include_histograms:
+                    for i in range(env.observation_space.shape[0]):
+                        tf.contrib.summary.histogram(
+                            'states/{}/eval'.format(i), states[..., i])
+                    for i in range(env.action_space.shape[0]):
+                        tf.contrib.summary.histogram(
+                            'actions/{}/eval'.format(i), actions[..., i])
+                    tf.contrib.summary.histogram('rewards/eval', rewards)
 
             # save checkpoint
             checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
             checkpoint.save(file_prefix=checkpoint_prefix)
+
+        # sync variables
+        pynr.training.update_target_variables(
+            source_variables=policy.variables,
+            target_variables=policy_anchor.variables)
 
 
 if __name__ == '__main__':

@@ -84,12 +84,12 @@ class Policy(tf.keras.Model):
         hidden = self.dense1(inputs)
 
         # compute an initial state for the RNN
-        if self.hidden_state is None or self.cell_state is None or reset_state:
-            self.hidden_state, self.cell_state = self.get_initial_state(
-                inputs.shape[0])
+        # if self.hidden_state is None or self.cell_state is None or reset_state:
+        #     self.hidden_state, self.cell_state = self.get_initial_state(
+        #         inputs.shape[0])
 
-        hidden, self.hidden_state, self.cell_state = self.rnn(
-            hidden, initial_state=[self.hidden_state, self.cell_state])
+        # hidden, self.hidden_state, self.cell_state = self.rnn(
+        #     hidden, initial_state=[self.hidden_state, self.cell_state])
 
         hidden = self.dense2(hidden)
         loc = self.dense_loc(hidden)
@@ -151,12 +151,12 @@ class Value(tf.keras.Model):
         hidden = self.dense1(inputs)
 
         # compute an initial state for the RNN
-        if self.hidden_state is None or self.cell_state is None or reset_state:
-            self.hidden_state, self.cell_state = self.get_initial_state(
-                inputs.shape[0])
+        # if self.hidden_state is None or self.cell_state is None or reset_state:
+        #     self.hidden_state, self.cell_state = self.get_initial_state(
+        #         inputs.shape[0])
 
-        hidden, self.hidden_state, self.cell_state = self.rnn(
-            hidden, initial_state=[self.hidden_state, self.cell_state])
+        # hidden, self.hidden_state, self.cell_state = self.rnn(
+        #     hidden, initial_state=[self.hidden_state, self.cell_state])
 
         hidden = self.dense2(hidden)
         value = self.dense_value(hidden)

@@ -21,6 +21,11 @@ class KukaEnv(gym.Env):
         dir_path = os.path.dirname(os.path.realpath(__file__))
         self.data_path = os.path.abspath(
             os.path.join(dir_path, os.pardir, 'data'))
+        print('KukaEnv.__file__', __file__)
+        print('KukaEnv.realpath', os.path.realpath(__file__))
+        print('KukaEnv.dir_path', dir_path)
+        print('KukaEnv.data_path', self.data_path)
+        print('KukaEnv.listdir', os.listdir(self.data_path))
 
         if self.should_render:
             p.connect(p.GUI)
