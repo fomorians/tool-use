@@ -147,65 +147,56 @@ def main():
 
     for it in range(params.train_iters):
         # training
+        states, actions, rewards, next_states, weights = rollout(
+            exploration_strategy)
+
+        rewards_moments(rewards, weights=weights, training=True)
+
+        rewards_norm = pynr.math.safe_divide(rewards, rewards_moments.std)
+
+        values_target = baseline(states, reset_state=True)
+
+        advantages = pyrl.targets.generalized_advantages(
+            rewards=rewards_norm,
+            values=values_target,
+            discount_factor=params.discount_factor,
+            lambda_factor=params.lambda_factor,
+            weights=weights,
+            normalize=True)
+        returns = pyrl.targets.discounted_rewards(
+            rewards=rewards_norm,
+            discount_factor=params.discount_factor,
+            weights=weights)
+
+        episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+        print(it, 'episodic_rewards/train', episodic_rewards.numpy())
+
+        with tf.contrib.summary.always_record_summaries():
+            tf.contrib.summary.scalar('episodic_rewards/train',
+                                      episodic_rewards)
+            tf.contrib.summary.scalar('rewards/mean', rewards_moments.mean)
+            tf.contrib.summary.scalar('rewards/std', rewards_moments.std)
+
+            if args.include_histograms:
+                for i in range(env.observation_space.shape[0]):
+                    tf.contrib.summary.histogram('states/{}/train'.format(i),
+                                                 states[..., i])
+                for i in range(env.action_space.shape[0]):
+                    tf.contrib.summary.histogram('actions/{}/train'.format(i),
+                                                 actions[..., i])
+                tf.contrib.summary.histogram('rewards/train', rewards)
+                tf.contrib.summary.histogram('rewards_norm/train', rewards)
+                tf.contrib.summary.histogram('rewards_norm/train',
+                                             rewards_norm)
+                tf.contrib.summary.histogram('advantages/train', advantages)
+                tf.contrib.summary.histogram('returns/train', returns)
+
         with tf.device('cpu:0'):
-            states, actions, rewards, next_states, weights = rollout(
-                exploration_strategy)
-
-            rewards_moments(rewards, weights=weights, training=True)
-
-            rewards_norm = pynr.math.safe_divide(rewards, rewards_moments.std)
-            # rewards_norm = pynr.math.normalize(
-            #     rewards,
-            #     loc=rewards_moments.mean,
-            #     scale=rewards_moments.std,
-            #     weights=weights)
-
-            values_target = baseline(states, reset_state=True)
-
-            advantages = pyrl.targets.generalized_advantages(
-                rewards=rewards_norm,
-                values=values_target,
-                discount_factor=params.discount_factor,
-                lambda_factor=params.lambda_factor,
-                weights=weights,
-                normalize=True)
-            returns = pyrl.targets.discounted_rewards(
-                rewards=rewards_norm,
-                discount_factor=params.discount_factor,
-                weights=weights)
-
-            episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
-            print(it, 'episodic_rewards/train', episodic_rewards.numpy())
-
-            with tf.contrib.summary.always_record_summaries():
-                tf.contrib.summary.scalar('episodic_rewards/train',
-                                          episodic_rewards)
-                tf.contrib.summary.scalar('rewards/mean', rewards_moments.mean)
-                tf.contrib.summary.scalar('rewards/std', rewards_moments.std)
-
-                if args.include_histograms:
-                    for i in range(env.observation_space.shape[0]):
-                        tf.contrib.summary.histogram(
-                            'states/{}/train'.format(i), states[..., i])
-                    for i in range(env.action_space.shape[0]):
-                        tf.contrib.summary.histogram(
-                            'actions/{}/train'.format(i), actions[..., i])
-                    tf.contrib.summary.histogram('rewards/train', rewards)
-                    tf.contrib.summary.histogram('rewards_norm/train', rewards)
-                    tf.contrib.summary.histogram('rewards_norm/train',
-                                                 rewards_norm)
-                    tf.contrib.summary.histogram('advantages/train',
-                                                 advantages)
-                    tf.contrib.summary.histogram('returns/train', returns)
-
             dataset = tf.data.Dataset.from_tensor_slices(
                 (states, actions, rewards_norm, advantages, returns, weights))
             dataset = dataset.batch(params.batch_size)
             dataset = dataset.repeat(params.epochs)
-
-        if tfe.num_gpus() > 0:
-            dataset = dataset.apply(
-                tf.data.experimental.prefetch_to_device('gpu:0'))
+            dataset = dataset.prefetch(params.episodes)
 
         for (states, actions, rewards_norm, advantages, returns,
              weights) in dataset:
@@ -272,30 +263,28 @@ def main():
 
         # evaluation
         if it % params.eval_interval == params.eval_interval - 1:
-            with tf.device('cpu:0'):
-                states, actions, rewards, next_states, weights = rollout(
-                    inference_strategy)
+            states, actions, rewards, next_states, weights = rollout(
+                inference_strategy)
 
-                episodic_rewards = tf.reduce_mean(
-                    tf.reduce_sum(rewards, axis=-1))
-                print(it, 'episodic_rewards/eval', episodic_rewards.numpy())
+            episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+            print(it, 'episodic_rewards/eval', episodic_rewards.numpy())
 
-                with tf.contrib.summary.always_record_summaries():
-                    tf.contrib.summary.scalar('episodic_rewards/eval',
-                                              episodic_rewards)
+            with tf.contrib.summary.always_record_summaries():
+                tf.contrib.summary.scalar('episodic_rewards/eval',
+                                          episodic_rewards)
 
-                    if args.include_histograms:
-                        for i in range(env.observation_space.shape[0]):
-                            tf.contrib.summary.histogram(
-                                'states/{}/eval'.format(i), states[..., i])
-                        for i in range(env.action_space.shape[0]):
-                            tf.contrib.summary.histogram(
-                                'actions/{}/eval'.format(i), actions[..., i])
-                        tf.contrib.summary.histogram('rewards/eval', rewards)
+                if args.include_histograms:
+                    for i in range(env.observation_space.shape[0]):
+                        tf.contrib.summary.histogram(
+                            'states/{}/eval'.format(i), states[..., i])
+                    for i in range(env.action_space.shape[0]):
+                        tf.contrib.summary.histogram(
+                            'actions/{}/eval'.format(i), actions[..., i])
+                    tf.contrib.summary.histogram('rewards/eval', rewards)
 
-                # save checkpoint
-                checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
-                checkpoint.save(file_prefix=checkpoint_prefix)
+            # save checkpoint
+            checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
+            checkpoint.save(file_prefix=checkpoint_prefix)
 
 
 if __name__ == '__main__':

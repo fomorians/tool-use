@@ -28,7 +28,7 @@ class HyperParams:
     epsilon_clipping = attr.ib(default=0.2)
     discount_factor = attr.ib(default=0.99)
     lambda_factor = attr.ib(default=0.95)
-    scale = attr.ib(default=0.5)
+    scale = attr.ib(default=1.0)
 
     def save(self, path):
         with open(path, 'w') as fp:

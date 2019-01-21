@@ -58,13 +58,16 @@ class KukaEnv(gym.Env):
         goal_pos_high = np.array([0.8, 0.8, 1.0], dtype=np.float32)
         goal_pos_low = np.array([0.3, 0.3, 0.2], dtype=np.float32)
 
+        end_pos_high = np.array([1.0, 1.0, 1.0], dtype=np.float32)
+        end_pos_low = np.array([-1.0, -1.0, -1.0], dtype=np.float32)
+
         observation_high = np.concatenate([
             joint_position_high, joint_velocity_high, joint_torque_high,
-            goal_pos_high
+            goal_pos_high, end_pos_high
         ])
         observation_low = np.concatenate([
             joint_position_low, joint_velocity_low, joint_torque_low,
-            goal_pos_low
+            goal_pos_low, end_pos_low
         ])
 
         action_high = np.full(
@@ -113,12 +116,12 @@ class KukaEnv(gym.Env):
         # load kuka arm
         self.kuka = Kuka()
 
-        target_values = [
-            np.random.uniform(joint_info.jointLowerLimit / 4,
-                              joint_info.jointUpperLimit / 4)
-            for joint_info in self.kuka.get_joint_info()
-        ]
-        self.kuka.reset_joint_states(target_values)
+        # target_values = [
+        #     np.random.uniform(joint_info.jointLowerLimit / 4,
+        #                       joint_info.jointUpperLimit / 4)
+        #     for joint_info in self.kuka.get_joint_info()
+        # ]
+        # self.kuka.reset_joint_states(target_values)
 
         p.setGravity(0, 0, self.gravity)
         p.stepSimulation()
@@ -134,9 +137,16 @@ class KukaEnv(gym.Env):
                          joint_state.appliedJointMotorTorque)
                         for joint_state in self.kuka.get_joint_state()]
         joint_positions, joint_velocities, joint_torques = zip(*joint_states)
+
         goal_pos, goal_orn = p.getBasePositionAndOrientation(self.goal_id)
+
+        end_state = p.getLinkState(self.kuka.kuka_id,
+                                   self.kuka.end_effector_index)
+        end_pos = end_state[4]
+
         observation = np.array(
-            joint_positions + joint_velocities + joint_torques + goal_pos,
+            joint_positions + joint_velocities + joint_torques + goal_pos +
+            end_pos,
             dtype=self.observation_space.dtype)
         return observation
 
