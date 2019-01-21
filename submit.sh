@@ -19,3 +19,5 @@ gcloud ml-engine jobs submit training $JOB_NAME \
     -- \
     --env $ENV \
     --seed $SEED
+
+gcloud ml-engine jobs stream-logs $JOB_NAME
