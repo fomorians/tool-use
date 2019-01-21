@@ -42,7 +42,7 @@ def main():
     parser.add_argument('--env', default='Pendulum-v0')
     parser.add_argument('--seed', default=42, type=int)
     parser.add_argument('--render', action='store_true')
-    parser.add_argument('--train-iters', default=100, type=int)
+    parser.add_argument('--train-iters', default=1000, type=int)
     parser.add_argument('--include-histograms', action='store_true')
     args = parser.parse_args()
     print(args)
@@ -68,12 +68,17 @@ def main():
     # eager
     tf.enable_eager_execution()
 
+    # GPUs
+    print('GPU Available:', tf.test.is_gpu_available())
+    print('GPU Name:', tf.test.gpu_device_name())
+    print('# of GPUs:', tfe.num_gpus())
+
+    # environment
     def env_constructor():
         env = gym.make(params.env)
         env = ActionRangeNormalize(env)
         return env
 
-    # environment
     env = pyrl.envs.BatchEnv(
         constructor=env_constructor,
         batch_size=params.episodes,
@@ -141,8 +146,6 @@ def main():
         target_variables=policy_anchor.variables)
 
     for it in range(params.train_iters):
-        print('iteration:', it)
-
         # training
         with tf.device('cpu:0'):
             states, actions, rewards, next_states, weights = rollout(
@@ -172,6 +175,7 @@ def main():
                 weights=weights)
 
             episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+            print(it, 'episodic_rewards/train', episodic_rewards.numpy())
 
             with tf.contrib.summary.always_record_summaries():
                 tf.contrib.summary.scalar('episodic_rewards/train',
@@ -194,12 +198,8 @@ def main():
                                                  advantages)
                     tf.contrib.summary.histogram('returns/train', returns)
 
-            policy_anchor_dist = policy_anchor(states, reset_state=True)
-            log_probs_anchor = policy_anchor_dist.log_prob(actions)
-
-            dataset = tf.data.Dataset.from_tensors(
-                (states, actions, rewards_norm, advantages, returns,
-                 log_probs_anchor, weights))
+            dataset = tf.data.Dataset.from_tensor_slices(
+                (states, actions, rewards_norm, advantages, returns, weights))
             dataset = dataset.batch(params.batch_size)
             dataset = dataset.repeat(params.epochs)
 
@@ -208,11 +208,15 @@ def main():
                 tf.data.experimental.prefetch_to_device('gpu:0'))
 
         for (states, actions, rewards_norm, advantages, returns,
-             log_probs_anchor, weights) in dataset:
+             weights) in dataset:
             with tf.GradientTape() as tape:
                 # forward passes
                 policy_dist = policy(states, training=True, reset_state=True)
                 log_probs = policy_dist.log_prob(actions)
+
+                policy_anchor_dist = policy_anchor(states, reset_state=True)
+                log_probs_anchor = policy_anchor_dist.log_prob(actions)
+
                 entropy = policy_dist.entropy()
                 values = baseline(states, training=True, reset_state=True)
 
@@ -261,36 +265,37 @@ def main():
                 tf.contrib.summary.scalar('entropy', entropy_mean)
                 tf.contrib.summary.scalar('kl', kl)
 
+        # sync variables
+        pynr.training.update_target_variables(
+            source_variables=policy.variables,
+            target_variables=policy_anchor.variables)
+
         # evaluation
         if it % params.eval_interval == params.eval_interval - 1:
             with tf.device('cpu:0'):
                 states, actions, rewards, next_states, weights = rollout(
                     inference_strategy)
 
-            with tf.contrib.summary.always_record_summaries():
                 episodic_rewards = tf.reduce_mean(
                     tf.reduce_sum(rewards, axis=-1))
+                print(it, 'episodic_rewards/eval', episodic_rewards.numpy())
 
-                tf.contrib.summary.scalar('episodic_rewards/eval',
-                                          episodic_rewards)
+                with tf.contrib.summary.always_record_summaries():
+                    tf.contrib.summary.scalar('episodic_rewards/eval',
+                                              episodic_rewards)
 
-                if args.include_histograms:
-                    for i in range(env.observation_space.shape[0]):
-                        tf.contrib.summary.histogram(
-                            'states/{}/eval'.format(i), states[..., i])
-                    for i in range(env.action_space.shape[0]):
-                        tf.contrib.summary.histogram(
-                            'actions/{}/eval'.format(i), actions[..., i])
-                    tf.contrib.summary.histogram('rewards/eval', rewards)
+                    if args.include_histograms:
+                        for i in range(env.observation_space.shape[0]):
+                            tf.contrib.summary.histogram(
+                                'states/{}/eval'.format(i), states[..., i])
+                        for i in range(env.action_space.shape[0]):
+                            tf.contrib.summary.histogram(
+                                'actions/{}/eval'.format(i), actions[..., i])
+                        tf.contrib.summary.histogram('rewards/eval', rewards)
 
-            # save checkpoint
-            checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
-            checkpoint.save(file_prefix=checkpoint_prefix)
-
-        # sync variables
-        pynr.training.update_target_variables(
-            source_variables=policy.variables,
-            target_variables=policy_anchor.variables)
+                # save checkpoint
+                checkpoint_prefix = os.path.join(args.job_dir, 'ckpt')
+                checkpoint.save(file_prefix=checkpoint_prefix)
 
 
 if __name__ == '__main__':
