@@ -19,13 +19,7 @@ class KukaEnv(gym.Env):
         self.gravity = -9.8
 
         dir_path = os.path.dirname(os.path.realpath(__file__))
-        self.data_path = os.path.abspath(
-            os.path.join(dir_path, os.pardir, 'data'))
-        print('KukaEnv.__file__', __file__)
-        print('KukaEnv.realpath', os.path.realpath(__file__))
-        print('KukaEnv.dir_path', dir_path)
-        print('KukaEnv.data_path', self.data_path)
-        print('KukaEnv.listdir', os.listdir(self.data_path))
+        self.data_path = os.path.abspath(os.path.join(dir_path, 'data'))
 
         if self.should_render:
             p.connect(p.GUI)
@@ -120,8 +114,8 @@ class KukaEnv(gym.Env):
         self.kuka = Kuka()
 
         target_values = [
-            np.random.uniform(joint_info.jointLowerLimit / 2,
-                              joint_info.jointUpperLimit / 2)
+            np.random.uniform(joint_info.jointLowerLimit / 4,
+                              joint_info.jointUpperLimit / 4)
             for joint_info in self.kuka.get_joint_info()
         ]
         self.kuka.reset_joint_states(target_values)
@@ -182,7 +176,7 @@ def main():
     episodes = 100
     max_episode_steps = 1000
 
-    for episode in trange(episodes):
+    for episode in range(episodes):
         state = env.reset()
         for step in range(max_episode_steps):
             action = env.action_space.sample()
