@@ -10,39 +10,19 @@ import tensorflow_probability as tfp
 import pyoneer as pynr
 import pyoneer.rl as pyrl
 
-from tool_use.models import Policy, Value
+from tool_use import models
 from tool_use.params import HyperParams
+from tool_use.wrappers import RangeNormalize
 from tool_use.parallel_rollout import ParallelRollout
-
-
-class ActionRangeNormalize:
-    def __init__(self, env):
-        self.env = env
-
-    def __getattr__(self, name):
-        return getattr(self.env, name)
-
-    @property
-    def action_space(self):
-        action_space = self.env.action_space
-        low = -np.ones(shape=action_space.shape, dtype=action_space.dtype)
-        high = np.ones(shape=action_space.shape, dtype=action_space.dtype)
-        return gym.spaces.Box(low, high, dtype=np.float32)
-
-    def step(self, action):
-        low = self.env.action_space.low
-        high = self.env.action_space.high
-        action = (action + 1) / 2 * (high - low) + low
-        return self.env.step(action)
 
 
 def main():
     parser = argparse.ArgumentParser()
+    # parser.add_argument('--supervised-job-dir', required=True)
     parser.add_argument('--job-dir', required=True)
     parser.add_argument('--env', default='Pendulum-v0')
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--render', action='store_true')
-    parser.add_argument('--train-iters', default=1000, type=int)
+    parser.add_argument('--train-iters', default=100, type=int)
     parser.add_argument('--include-histograms', action='store_true')
     args = parser.parse_args()
     print(args)
@@ -51,7 +31,7 @@ def main():
     gym.envs.register(
         id='KukaEnv-v0',
         entry_point='tool_use.kuka_env:KukaEnv',
-        max_episode_steps=1000)
+        max_episode_steps=200)
     gym.make('KukaEnv-v0')
 
     # make job directory
@@ -76,7 +56,7 @@ def main():
     # environment
     def env_constructor():
         env = gym.make(params.env)
-        env = ActionRangeNormalize(env)
+        env = RangeNormalize(env)
         return env
 
     env = pyrl.envs.BatchEnv(
@@ -95,15 +75,11 @@ def main():
     optimizer = tf.train.AdamOptimizer(learning_rate=params.learning_rate)
 
     # models
-    policy = Policy(
-        observation_space=env.observation_space,
-        action_space=env.action_space,
-        scale=params.scale)
-    policy_anchor = Policy(
-        observation_space=env.observation_space,
-        action_space=env.action_space,
-        scale=params.scale)
-    baseline = Value(observation_space=env.observation_space)
+    policy = models.Policy(
+        action_size=env.action_space.shape[0], scale=params.scale)
+    policy_anchor = models.Policy(
+        action_size=env.action_space.shape[0], scale=params.scale)
+    value = models.Value()
 
     # strategies
     exploration_strategy = pyrl.strategies.SampleStrategy(policy)
@@ -118,7 +94,7 @@ def main():
         global_step=global_step,
         optimizer=optimizer,
         policy=policy,
-        baseline=baseline,
+        value=value,
         rewards_moments=rewards_moments)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     if checkpoint_path is not None:
@@ -154,7 +130,7 @@ def main():
 
         rewards_norm = pynr.math.safe_divide(rewards, rewards_moments.std)
 
-        values_target = baseline(states, reset_state=True)
+        values_target = value(states, reset_state=True)
 
         advantages = pyrl.targets.generalized_advantages(
             rewards=rewards_norm,
@@ -209,7 +185,7 @@ def main():
                 log_probs_anchor = policy_anchor_dist.log_prob(actions)
 
                 entropy = policy_dist.entropy()
-                values = baseline(states, training=True, reset_state=True)
+                values = value(states, training=True, reset_state=True)
 
                 # losses
                 policy_loss = pyrl.losses.clipped_policy_gradient_loss(
@@ -228,7 +204,7 @@ def main():
 
             # optimization
             trainable_variables = (
-                policy.trainable_variables + baseline.trainable_variables)
+                policy.trainable_variables + value.trainable_variables)
             grads = tape.gradient(loss, trainable_variables)
             if params.grad_clipping is not None:
                 grads_clipped, _ = tf.clip_by_global_norm(
@@ -242,14 +218,13 @@ def main():
                 entropy_mean = tf.losses.compute_weighted_loss(
                     losses=entropy, weights=weights)
 
-                tf.contrib.summary.scalar('losses/policy', policy_loss)
-                tf.contrib.summary.scalar('losses/value', value_loss)
-                tf.contrib.summary.scalar('losses/entropy', entropy_loss)
-                tf.contrib.summary.scalar('losses/loss', loss)
+                tf.contrib.summary.scalar('loss/policy', policy_loss)
+                tf.contrib.summary.scalar('loss/value', value_loss)
+                tf.contrib.summary.scalar('loss/entropy', entropy_loss)
 
-                tf.contrib.summary.scalar('gradient_norm/unclipped',
-                                          tf.global_norm(grads))
                 tf.contrib.summary.scalar('gradient_norm',
+                                          tf.global_norm(grads))
+                tf.contrib.summary.scalar('gradient_norm/clipped',
                                           tf.global_norm(grads_clipped))
 
                 tf.contrib.summary.scalar('scale_diag', policy.scale_diag)

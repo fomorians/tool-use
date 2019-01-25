@@ -3,6 +3,22 @@ import json
 
 
 @attr.s
+class SupervisedHyperParams:
+    env = attr.ib()
+    seed = attr.ib(default=42)
+    epochs = attr.ib(default=100)
+    episodes = attr.ib(default=1000)
+    eval_episodes = attr.ib(default=100)
+    batch_size = attr.ib(default=10)
+    learning_rate = attr.ib(default=1e-3)
+    grad_clipping = attr.ib(default=10)
+
+    def save(self, path):
+        with open(path, 'w') as fp:
+            json.dump(attr.asdict(self), fp)
+
+
+@attr.s
 class HyperParams:
     # environment
     env = attr.ib()
@@ -18,10 +34,10 @@ class HyperParams:
 
     # losses
     value_coef = attr.ib(default=1e-3)
-    entropy_coef = attr.ib(default=1e-3)
+    entropy_coef = attr.ib(default=0.05)
 
     # optimization
-    learning_rate = attr.ib(default=3e-4)
+    learning_rate = attr.ib(default=1e-3)
     grad_clipping = attr.ib(default=10.0)
 
     # PPO

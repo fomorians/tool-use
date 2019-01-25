@@ -5,9 +5,10 @@ import numpy as np
 import tensorflow as tf
 import pyoneer.rl as pyrl
 
-from tool_use.models import Policy
+from tool_use import models
 from tool_use.params import HyperParams
 from tool_use.rollout import Rollout
+from tool_use.wrappers import RangeNormalize
 
 
 def main():
@@ -23,7 +24,7 @@ def main():
     gym.envs.register(
         id='KukaEnv-v0',
         entry_point='tool_use.kuka_env:KukaEnv',
-        max_episode_steps=1000,
+        max_episode_steps=200,
         kwargs=dict(should_render=args.render))
 
     # params
@@ -34,6 +35,7 @@ def main():
 
     # environment
     env = gym.make(args.env)
+    env = RangeNormalize(env)
 
     # seeding
     env.seed(args.seed)
@@ -45,10 +47,9 @@ def main():
     rollout = Rollout(env, max_episode_steps=env.spec.max_episode_steps)
 
     # policies
-    policy = Policy(
-        observation_space=env.observation_space,
-        action_space=env.action_space,
-        scale=params.scale)
+    policy = models.Policy(
+        action_size=env.action_space.shape[0], scale=params.scale)
+
     inference_strategy = pyrl.strategies.ModeStrategy(policy)
 
     # checkpoints

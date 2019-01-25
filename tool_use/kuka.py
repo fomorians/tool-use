@@ -4,8 +4,6 @@ import numpy as np
 import pybullet as p
 import pybullet_data
 
-HALF_PI = np.pi / 2
-
 
 @attr.s
 class JointInfo:
@@ -50,20 +48,27 @@ class Kuka:
     """
 
     def __init__(self):
-        self.data_path = pybullet_data.getDataPath()
+        data_path = pybullet_data.getDataPath()
+        kuka_path = os.path.join(data_path, 'kuka_iiwa/model.urdf')
 
-        self.kuka_path = os.path.join(self.data_path, 'kuka_iiwa/model.urdf')
         self.kuka_id = p.loadURDF(
-            fileName=os.path.join(self.data_path, 'kuka_iiwa/model.urdf'),
+            fileName=kuka_path,
             basePosition=[0, 0, 0],
             baseOrientation=[0, 0, 0, 1],
             useFixedBase=True)
 
         self.num_joints = p.getNumJoints(bodyUniqueId=self.kuka_id)
         self.joint_indices = list(range(self.num_joints))
-        self.max_force = 500  # NOTE: originally 300
+        self.max_force = 300
         self.max_velocity = 10
         self.end_effector_index = 6
+        self.joint_position_high = np.array(
+            [
+                2.96705972839, 2.09439510239, 2.96705972839, 2.09439510239,
+                2.96705972839, 2.09439510239, 3.05432619099
+            ],
+            dtype=np.float32)
+        self.joint_position_low = -self.joint_position_high
 
     def reset_joint_states(self, target_values):
         for joint_index in range(self.num_joints):
@@ -74,12 +79,14 @@ class Kuka:
                 targetValue=target_value)
 
     def get_joint_info(self):
+        # TODO: use array method
         for joint_index in range(self.num_joints):
             joint_info = JointInfo(*p.getJointInfo(
                 bodyUniqueId=self.kuka_id, jointIndex=joint_index))
             yield joint_info
 
     def get_joint_state(self):
+        # TODO: use array method
         for joint_index in range(self.num_joints):
             joint_state = JointState(*p.getJointState(
                 bodyUniqueId=self.kuka_id, jointIndex=joint_index))
@@ -94,3 +101,16 @@ class Kuka:
             controlMode=p.VELOCITY_CONTROL,
             targetVelocities=joint_velocities,
             forces=[self.max_force] * self.num_joints)
+
+    def apply_joint_positions(self, joint_positions):
+        joint_positions = np.clip(joint_positions, -self.max_velocity,
+                                  self.max_velocity)
+
+        p.setJointMotorControlArray(
+            bodyIndex=self.kuka_id,
+            jointIndices=self.joint_indices,
+            controlMode=p.POSITION_CONTROL,
+            targetPositions=joint_positions,
+            targetVelocities=[0] * self.num_joints,
+            forces=[self.max_force] * self.num_joints,
+            positionGains=[0.05] * self.num_joints)
