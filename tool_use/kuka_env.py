@@ -35,6 +35,9 @@ class KukaEnv(gym.Env):
 
         self.seed()
 
+        max_velocity = 10
+        num_joints = 7
+
         joint_position_high = np.array(
             [
                 2.96705972839, 2.09439510239, 2.96705972839, 2.09439510239,
@@ -43,16 +46,13 @@ class KukaEnv(gym.Env):
             dtype=np.float32)
         joint_position_low = -joint_position_high
 
-        max_velocity = 10
-        num_joints = 7
         joint_velocities_high = np.full(
             shape=num_joints, fill_value=max_velocity, dtype=np.float32)
         joint_velocities_low = -joint_velocities_high
 
-        self.action_space = spaces.Box(
-            low=joint_position_low[:1],
-            high=joint_position_high[:1],
-            dtype=np.float32)
+        action_high = np.full(
+            shape=1, fill_value=max_velocity, dtype=np.float32)
+        action_low = -action_high
 
         end_high = np.array([1, 1, 1], dtype=np.float32)
         end_low = -end_high
@@ -67,6 +67,8 @@ class KukaEnv(gym.Env):
 
         self.observation_space = spaces.Box(
             low=observation_low, high=observation_high, dtype=np.float32)
+        self.action_space = spaces.Box(
+            low=action_low, high=action_high, dtype=np.float32)
 
     def seed(self, seed=None):
         self.np_random, seed = seeding.np_random(seed)
@@ -161,10 +163,10 @@ class KukaEnv(gym.Env):
     def step(self, action):
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
-        joint_positions = np.zeros(shape=7, dtype=np.float32)
-        joint_positions[0] = action
-        joint_positions[1] = np.pi / 2
-        self.kuka.apply_joint_positions(joint_positions)
+        joint_velocities = np.zeros(shape=7, dtype=np.float32)
+        joint_velocities[0] = action
+        joint_velocities[1] = np.pi / 2
+        self.kuka.apply_joint_velocities(joint_velocities)
 
         p.stepSimulation()
 
