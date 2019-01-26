@@ -15,8 +15,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--job-dir', required=True)
     parser.add_argument('--env', default='Pendulum-v0')
-    parser.add_argument('--seed', default=42)
-    parser.add_argument('--episodes', default=10)
+    parser.add_argument('--seed', default=42, type=int)
+    parser.add_argument('--episodes', default=10, type=int)
     parser.add_argument('--render', action='store_true')
     args = parser.parse_args()
 

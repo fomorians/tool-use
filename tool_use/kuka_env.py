@@ -44,6 +44,7 @@ class KukaEnv(gym.Env):
                 2.96705972839, 2.09439510239, 3.05432619099
             ],
             dtype=np.float32)
+        # joint_position_high = np.ones(shape=num_joints * 2, dtype=np.float32)
         joint_position_low = -joint_position_high
 
         joint_velocities_high = np.full(
@@ -51,14 +52,14 @@ class KukaEnv(gym.Env):
         joint_velocities_low = -joint_velocities_high
 
         action_high = np.full(
-            shape=1, fill_value=max_velocity, dtype=np.float32)
+            shape=2, fill_value=max_velocity, dtype=np.float32)
         action_low = -action_high
 
         end_high = np.array([1, 1, 1], dtype=np.float32)
-        end_low = -end_high
+        end_low = np.array([-1, -1, 0], dtype=np.float32)
 
         goal_high = np.array([1, 1, 1], dtype=np.float32)
-        goal_low = -goal_high
+        goal_low = np.array([-1, -1, 0], dtype=np.float32)
 
         observation_high = np.concatenate(
             [joint_position_high, joint_velocities_high, end_high, goal_high])
@@ -87,12 +88,12 @@ class KukaEnv(gym.Env):
         # load randomly positioned/oriented goal
         goal_path = os.path.join(self.data_path, 'cube.urdf')
         goal_pos_angle = np.random.sample() * np.pi * 2
+        goal_pos_height = np.random.uniform(0.05, 1.0)
         goal_pos_size = 1  # np.random.uniform(0.3, 0.8)
-        # goal_pos_height = np.random.uniform(0.2, 1.0)
         goal_pos = [
             np.cos(goal_pos_angle) * goal_pos_size,
             np.sin(goal_pos_angle) * goal_pos_size,
-            0.15,  # goal_pos_height,
+            goal_pos_height,
         ]
         goal_orn = p.getQuaternionFromEuler([
             0,  # np.random.uniform(-np.pi, np.pi),
@@ -139,6 +140,11 @@ class KukaEnv(gym.Env):
             joint_state.jointPosition
             for joint_state in self.kuka.get_joint_state()
         ])
+        # joint_positions = []
+        # for joint_state in self.kuka.get_joint_state():
+        #     joint_positions.append(np.cos(joint_state.jointPosition))
+        #     joint_positions.append(np.sin(joint_state.jointPosition))
+        # return np.array(joint_positions)
 
     def _get_joint_velocities(self):
         return np.array([
@@ -164,8 +170,8 @@ class KukaEnv(gym.Env):
         action = np.clip(action, self.action_space.low, self.action_space.high)
 
         joint_velocities = np.zeros(shape=7, dtype=np.float32)
-        joint_velocities[0] = action
-        joint_velocities[1] = np.pi / 2
+        joint_velocities[0] = action[0]
+        joint_velocities[1] = action[1]
         self.kuka.apply_joint_velocities(joint_velocities)
 
         p.stepSimulation()
