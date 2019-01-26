@@ -25,8 +25,7 @@ def main():
     gym.envs.register(
         id='KukaEnv-v0',
         entry_point='tool_use.kuka_env:KukaEnv',
-        max_episode_steps=200,
-        kwargs=dict(should_render=False))
+        max_episode_steps=200)
 
     # make job directory
     if not os.path.exists(args.job_dir):

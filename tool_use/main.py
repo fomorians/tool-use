@@ -18,7 +18,6 @@ from tool_use.parallel_rollout import ParallelRollout
 
 def main():
     parser = argparse.ArgumentParser()
-    # parser.add_argument('--supervised-job-dir', required=True)
     parser.add_argument('--job-dir', required=True)
     parser.add_argument('--env', default='Pendulum-v0')
     parser.add_argument('--seed', default=42, type=int)

@@ -81,11 +81,11 @@ class Policy(tf.keras.Model):
         scale_initializer = pynr.initializers.SoftplusInverse(scale=scale)
 
         self.dense_hidden1 = tf.keras.layers.Dense(
-            units=200,
+            units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense_hidden2 = tf.keras.layers.Dense(
-            units=200,
+            units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense_loc = tf.keras.layers.Dense(
@@ -118,11 +118,11 @@ class Value(tf.keras.Model):
         logits_initializer = tf.keras.initializers.VarianceScaling(scale=1.0)
 
         self.dense_hidden1 = tf.keras.layers.Dense(
-            units=200,
+            units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense_hidden2 = tf.keras.layers.Dense(
-            units=200,
+            units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
         self.dense_value = tf.keras.layers.Dense(

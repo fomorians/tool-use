@@ -43,20 +43,21 @@ def main():
     np.random.seed(args.seed)
     tf.set_random_seed(args.seed)
 
-    # rollouts
-    rollout = Rollout(env, max_episode_steps=env.spec.max_episode_steps)
-
     # policies
     policy = models.Policy(
         action_size=env.action_space.shape[0], scale=params.scale)
-
-    inference_strategy = pyrl.strategies.ModeStrategy(policy)
 
     # checkpoints
     checkpoint = tf.train.Checkpoint(policy=policy)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     assert checkpoint_path is not None
     checkpoint.restore(checkpoint_path)
+
+    # rollouts
+    rollout = Rollout(env, max_episode_steps=env.spec.max_episode_steps)
+
+    # strategies
+    inference_strategy = pyrl.strategies.ModeStrategy(policy)
 
     # rollouts
     render = (args.render and args.env != 'KukaEnv-v0')
