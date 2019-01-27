@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 
 
+# TODO: Use concat approach to work with regular rollout. Multiprocessing?
 class ParallelRollout:
     def __init__(self, env, max_episode_steps):
         self.env = env

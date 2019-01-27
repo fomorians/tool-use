@@ -91,7 +91,7 @@ class KukaEnv(gym.Env):
         # load randomly positioned/oriented goal
         goal_path = os.path.join(self.data_path, 'cube.urdf')
         goal_pos = self._get_init_goal_pos(randomize=True)
-        goal_orn = self._get_init_goal_orn(randomize=False)
+        goal_orn = self._get_init_goal_orn(randomize=True)
         self.goal_id = p.loadURDF(
             fileName=goal_path,
             basePosition=goal_pos,
@@ -103,12 +103,7 @@ class KukaEnv(gym.Env):
 
         # rejection sampling to find pose which does not intersect
         while True:
-            joint_states = [
-                np.random.uniform(-Kuka.joint_limits[joint_index],
-                                  Kuka.joint_limits[joint_index])
-                for joint_index in range(Kuka.num_joints)
-            ]
-            joint_states = [0 for _ in range(Kuka.num_joints)]
+            joint_states = self._get_init_joint_states(randomize=False)
             self.kuka.reset_joint_states(joint_states)
 
             p.stepSimulation()
@@ -127,6 +122,16 @@ class KukaEnv(gym.Env):
         observation = self._get_observation()
         return observation
 
+    def _get_init_joint_states(self, randomize=False):
+        if randomize:
+            return [
+                np.random.uniform(-Kuka.joint_limits[joint_index],
+                                  Kuka.joint_limits[joint_index])
+                for joint_index in range(Kuka.num_joints)
+            ]
+        else:
+            return [0.0] * Kuka.num_joints
+
     def _get_init_goal_pos(self, randomize=False):
         if randomize:
             goal_pos_angle = np.random.uniform(-np.pi, np.pi)
@@ -136,25 +141,26 @@ class KukaEnv(gym.Env):
             goal_pos_angle = -np.pi / 2
             goal_pos_height = 0.1
             goal_pos_size = 1
-        return [
+        return np.array([
             np.cos(goal_pos_angle) * goal_pos_size,
             np.sin(goal_pos_angle) * goal_pos_size,
             goal_pos_height,
-        ]
+        ])
 
     def _get_init_goal_orn(self, randomize=False):
         if randomize:
-            return p.getQuaternionFromEuler([
-                np.random.uniform(-np.pi, np.pi),
-                np.random.uniform(-np.pi, np.pi),
-                np.random.uniform(-np.pi, np.pi),
-            ])
+            return np.array(
+                p.getQuaternionFromEuler([
+                    np.random.uniform(-np.pi, np.pi),
+                    np.random.uniform(-np.pi, np.pi),
+                    np.random.uniform(-np.pi, np.pi),
+                ]))
         else:
-            return p.getQuaternionFromEuler([
+            return np.array(p.getQuaternionFromEuler([
                 0,
                 0,
                 0,
-            ])
+            ]))
 
     def _get_goal_pos(self):
         goal_pos, goal_orn = p.getBasePositionAndOrientation(self.goal_id)
@@ -199,7 +205,9 @@ class KukaEnv(gym.Env):
 
     def _get_reward(self):
         delta_pos = self._get_delta_pos()
+        joint_velocities = self._get_joint_velocities()
         reward = -np.sum(np.square(delta_pos))
+        reward += 0.0 * -np.sum(np.square(joint_velocities))
         return reward
 
     def step(self, action):

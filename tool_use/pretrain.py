@@ -1,5 +1,7 @@
 import os
 import gym
+import attr
+import json
 import random
 import argparse
 import numpy as np
@@ -7,10 +9,25 @@ import tensorflow as tf
 import tensorflow.contrib.eager as tfe
 
 from tool_use import models
-from tool_use.params import SupervisedHyperParams
 from tool_use.rollout import Rollout
 from tool_use.strategy import RandomStrategy
 from tool_use.wrappers import RangeNormalize
+
+
+@attr.s
+class SupervisedHyperParams:
+    env = attr.ib()
+    seed = attr.ib(default=42)
+    epochs = attr.ib(default=100)
+    episodes = attr.ib(default=1000)
+    eval_episodes = attr.ib(default=100)
+    batch_size = attr.ib(default=10)
+    learning_rate = attr.ib(default=1e-3)
+    grad_clipping = attr.ib(default=10)
+
+    def save(self, path):
+        with open(path, 'w') as fp:
+            json.dump(attr.asdict(self), fp)
 
 
 def main():

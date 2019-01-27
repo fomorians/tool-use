@@ -30,7 +30,6 @@ def main():
         id='KukaEnv-v0',
         entry_point='tool_use.kuka_env:KukaEnv',
         max_episode_steps=200)
-    gym.make('KukaEnv-v0')
 
     # make job directory
     if not os.path.exists(args.job_dir):
@@ -57,7 +56,9 @@ def main():
         return env
 
     env = pyrl.envs.BatchEnv(
-        constructor=env_constructor, batch_size=os.cpu_count(), blocking=False)
+        constructor=env_constructor,
+        batch_size=params.num_envs,
+        blocking=False)
 
     # seeding
     env.seed(params.seed)
@@ -121,6 +122,17 @@ def main():
         states, actions, rewards, next_states, weights = rollout(
             exploration_strategy, episodes=params.episodes)
 
+        miniepisodes = (
+            params.episodes * env.spec.max_episode_steps) // params.horizon
+
+        states = states.reshape(miniepisodes, params.horizon, states.shape[-1])
+        actions = actions.reshape(miniepisodes, params.horizon,
+                                  actions.shape[-1])
+        rewards = rewards.reshape(miniepisodes, params.horizon)
+        next_states = next_states.reshape(miniepisodes, params.horizon,
+                                          next_states.shape[-1])
+        weights = weights.reshape(miniepisodes, params.horizon)
+
         rewards_moments(rewards, weights=weights, training=True)
 
         rewards_norm = pynr.math.safe_divide(rewards, rewards_moments.std)
@@ -167,7 +179,7 @@ def main():
                 (states, actions, rewards_norm, advantages, returns, weights))
             dataset = dataset.batch(params.batch_size)
             dataset = dataset.repeat(params.epochs)
-            dataset = dataset.prefetch(params.episodes)
+            dataset = dataset.prefetch(miniepisodes)
 
         for (states, actions, rewards_norm, advantages, returns,
              weights) in dataset:

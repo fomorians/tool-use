@@ -3,22 +3,6 @@ import json
 
 
 @attr.s
-class SupervisedHyperParams:
-    env = attr.ib()
-    seed = attr.ib(default=42)
-    epochs = attr.ib(default=100)
-    episodes = attr.ib(default=1000)
-    eval_episodes = attr.ib(default=100)
-    batch_size = attr.ib(default=10)
-    learning_rate = attr.ib(default=1e-3)
-    grad_clipping = attr.ib(default=10)
-
-    def save(self, path):
-        with open(path, 'w') as fp:
-            json.dump(attr.asdict(self), fp)
-
-
-@attr.s
 class HyperParams:
     # environment
     env = attr.ib()
@@ -26,8 +10,10 @@ class HyperParams:
 
     # training
     train_iters = attr.ib(default=1000)
-    episodes = attr.ib(default=10)
+    episodes = attr.ib(default=12)
+    num_envs = attr.ib(default=4)
     epochs = attr.ib(default=10)
+    horizon = attr.ib(default=200)
     batch_size = attr.ib(default=1)
     eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)
