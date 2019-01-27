@@ -25,26 +25,26 @@ class HyperParams:
     seed = attr.ib(default=42)
 
     # training
-    train_iters = attr.ib(default=100)
-    episodes = attr.ib(default=8)
+    train_iters = attr.ib(default=1000)
+    episodes = attr.ib(default=10)
     epochs = attr.ib(default=10)
-    batch_size = attr.ib(default=2)
+    batch_size = attr.ib(default=1)
     eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)
 
     # losses
-    value_coef = attr.ib(default=1e-3)
-    entropy_coef = attr.ib(default=0.05)
+    value_coef = attr.ib(default=1e-4)
+    entropy_coef = attr.ib(default=0.0)
 
     # optimization
-    learning_rate = attr.ib(default=1e-3)
+    learning_rate = attr.ib(default=3e-4)
     grad_clipping = attr.ib(default=10.0)
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)
     discount_factor = attr.ib(default=0.99)
     lambda_factor = attr.ib(default=0.95)
-    scale = attr.ib(default=1.0)
+    scale = attr.ib(default=0.5)
 
     def save(self, path):
         with open(path, 'w') as fp:

@@ -21,7 +21,6 @@ def main():
     parser.add_argument('--job-dir', required=True)
     parser.add_argument('--env', default='Pendulum-v0')
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--train-iters', default=100, type=int)
     parser.add_argument('--include-histograms', action='store_true')
     args = parser.parse_args()
     print(args)
@@ -38,8 +37,7 @@ def main():
         os.makedirs(args.job_dir)
 
     # params
-    params = HyperParams(
-        env=args.env, seed=args.seed, train_iters=args.train_iters)
+    params = HyperParams(env=args.env, seed=args.seed)
     params_path = os.path.join(args.job_dir, 'params.json')
     params.save(params_path)
     print(params)
@@ -59,9 +57,7 @@ def main():
         return env
 
     env = pyrl.envs.BatchEnv(
-        constructor=env_constructor,
-        batch_size=params.episodes,
-        blocking=False)
+        constructor=env_constructor, batch_size=os.cpu_count(), blocking=False)
 
     # seeding
     env.seed(params.seed)
@@ -74,11 +70,10 @@ def main():
     optimizer = tf.train.AdamOptimizer(learning_rate=params.learning_rate)
 
     # models
-    policy = models.Policy(
+    policy = models.PolicyValue(
         action_size=env.action_space.shape[0], scale=params.scale)
-    policy_anchor = models.Policy(
+    policy_anchor = models.PolicyValue(
         action_size=env.action_space.shape[0], scale=params.scale)
-    value = models.Value()
 
     # strategies
     exploration_strategy = pyrl.strategies.SampleStrategy(policy)
@@ -93,7 +88,6 @@ def main():
         global_step=global_step,
         optimizer=optimizer,
         policy=policy,
-        value=value,
         rewards_moments=rewards_moments)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     if checkpoint_path is not None:
@@ -114,6 +108,8 @@ def main():
         shape=(1, 1, env.observation_space.shape[0]), dtype=np.float32)
     policy(mock_states, reset_state=True)
     policy_anchor(mock_states, reset_state=True)
+    policy.get_values(mock_states, reset_state=True)
+    policy_anchor.get_values(mock_states, reset_state=True)
 
     # sync variables
     pynr.training.update_target_variables(
@@ -123,13 +119,13 @@ def main():
     for it in range(params.train_iters):
         # training
         states, actions, rewards, next_states, weights = rollout(
-            exploration_strategy)
+            exploration_strategy, episodes=params.episodes)
 
         rewards_moments(rewards, weights=weights, training=True)
 
         rewards_norm = pynr.math.safe_divide(rewards, rewards_moments.std)
 
-        values_target = value(states, reset_state=True)
+        values_target = policy.get_values(states, reset_state=True)
 
         advantages = pyrl.targets.generalized_advantages(
             rewards=rewards_norm,
@@ -184,7 +180,8 @@ def main():
                 log_probs_anchor = policy_anchor_dist.log_prob(actions)
 
                 entropy = policy_dist.entropy()
-                values = value(states, training=True, reset_state=True)
+                values = policy.get_values(
+                    states, training=True, reset_state=True)
 
                 # losses
                 policy_loss = pyrl.losses.clipped_policy_gradient_loss(
@@ -202,13 +199,11 @@ def main():
                 loss = policy_loss + value_loss + entropy_loss
 
             # optimization
-            trainable_variables = (
-                policy.trainable_variables + value.trainable_variables)
-            grads = tape.gradient(loss, trainable_variables)
+            grads = tape.gradient(loss, policy.trainable_variables)
             if params.grad_clipping is not None:
                 grads_clipped, _ = tf.clip_by_global_norm(
                     grads, params.grad_clipping)
-            grads_and_vars = zip(grads_clipped, trainable_variables)
+            grads_and_vars = zip(grads_clipped, policy.trainable_variables)
             optimizer.apply_gradients(grads_and_vars, global_step=global_step)
 
             with tf.contrib.summary.always_record_summaries():
@@ -238,7 +233,7 @@ def main():
         # evaluation
         if it % params.eval_interval == params.eval_interval - 1:
             states, actions, rewards, next_states, weights = rollout(
-                inference_strategy)
+                inference_strategy, episodes=params.episodes)
 
             episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
             print(it, 'episodic_rewards/eval', episodic_rewards.numpy())

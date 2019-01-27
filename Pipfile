@@ -9,6 +9,7 @@ gym = {extras = ["box2d"], version = "*"}
 pybullet = "*"
 pyoneer = {editable = true, path = "/Users/fomoro/Documents/pyoneer"}
 tensorflow = "*"
+tensorflow-probability = "*"
 
 [dev-packages]
 jupyterlab = "*"

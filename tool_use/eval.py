@@ -44,7 +44,7 @@ def main():
     tf.set_random_seed(args.seed)
 
     # policies
-    policy = models.Policy(
+    policy = models.PolicyValue(
         action_size=env.action_space.shape[0], scale=params.scale)
 
     # checkpoints

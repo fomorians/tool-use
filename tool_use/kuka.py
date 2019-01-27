@@ -46,29 +46,26 @@ class Kuka:
     - lbr_iiwa_joint_6: Tilt Joint 3
     - lbr_iiwa_joint_7: End effector
     """
+    joint_limits = np.array(
+        [
+            2.96705972839, 2.09439510239, 2.96705972839, 2.09439510239,
+            2.96705972839, 2.09439510239, 3.05432619099
+        ],
+        dtype=np.float32)
+    num_joints = 7
+    max_force = 300
+    max_velocity = 10
+    end_effector_index = 6
+    joint_indices = list(range(num_joints))
 
     def __init__(self):
         data_path = pybullet_data.getDataPath()
         kuka_path = os.path.join(data_path, 'kuka_iiwa/model.urdf')
-
         self.kuka_id = p.loadURDF(
             fileName=kuka_path,
             basePosition=[0, 0, 0],
-            baseOrientation=[0, 0, 0, 1],
+            baseOrientation=p.getQuaternionFromEuler([0, 0, 0]),
             useFixedBase=True)
-
-        self.num_joints = p.getNumJoints(bodyUniqueId=self.kuka_id)
-        self.joint_indices = list(range(self.num_joints))
-        self.max_force = 300
-        self.max_velocity = 10
-        self.end_effector_index = 6
-        self.joint_position_high = np.array(
-            [
-                2.96705972839, 2.09439510239, 2.96705972839, 2.09439510239,
-                2.96705972839, 2.09439510239, 3.05432619099
-            ],
-            dtype=np.float32)
-        self.joint_position_low = -self.joint_position_high
 
     def reset_joint_states(self, target_values):
         for joint_index in range(self.num_joints):
@@ -79,14 +76,12 @@ class Kuka:
                 targetValue=target_value)
 
     def get_joint_info(self):
-        # TODO: use array method
         for joint_index in range(self.num_joints):
             joint_info = JointInfo(*p.getJointInfo(
                 bodyUniqueId=self.kuka_id, jointIndex=joint_index))
             yield joint_info
 
     def get_joint_state(self):
-        # TODO: use array method
         for joint_index in range(self.num_joints):
             joint_state = JointState(*p.getJointState(
                 bodyUniqueId=self.kuka_id, jointIndex=joint_index))
