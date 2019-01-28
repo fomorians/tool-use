@@ -14,7 +14,6 @@ def main():
     parser.add_argument('--job-dir', required=True)
     parser.add_argument('--env', default='Pendulum-v0')
     parser.add_argument('--seed', default=42, type=int)
-    parser.add_argument('--include-histograms', action='store_true')
     args = parser.parse_args()
     print(args)
 
@@ -40,7 +39,7 @@ def main():
     print('GPU Name:', tf.test.gpu_device_name())
     print('# of GPUs:', tfe.num_gpus())
 
-    trainer = Trainer(args.job_dir, params, args.include_histograms)
+    trainer = Trainer(args.job_dir, params)
     trainer.train()
 
 

@@ -14,10 +14,9 @@ from tool_use.parallel_rollout import ParallelRollout
 
 
 class Trainer:
-    def __init__(self, job_dir, params, include_histograms=False):
+    def __init__(self, job_dir, params):
         self.job_dir = job_dir
         self.params = params
-        self.include_histograms = include_histograms
 
         # environment
         def env_constructor():
@@ -25,10 +24,9 @@ class Trainer:
             env = RangeNormalize(env)
             return env
 
+        num_envs = os.cpu_count()
         self.env = pyrl.envs.BatchEnv(
-            constructor=env_constructor,
-            batch_size=self.params.num_envs,
-            blocking=False)
+            constructor=env_constructor, batch_size=num_envs, blocking=False)
 
         observation_size = self.env.observation_space.shape[0]
         action_size = self.env.action_space.shape[0]
@@ -92,14 +90,9 @@ class Trainer:
         # compute data
         # force rollouts to cpu
         with tf.device('/cpu:0'):
-            start_time = time.time()
             (observations, actions, rewards, observations_next,
              weights) = self.rollout(
                  self.exploration_strategy, episodes=self.params.episodes)
-            end_time = time.time()
-            rollout_time = end_time - start_time
-
-        start_time = time.time()
 
         mini_episodes = (
             (self.params.episodes * self.env.spec.max_episode_steps) //
@@ -133,9 +126,6 @@ class Trainer:
             discount_factor=self.params.discount_factor,
             weights=weights)
 
-        end_time = time.time()
-        target_time = end_time - start_time
-
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
         print(self.global_step.numpy(), 'episodic_rewards/train',
               episodic_rewards.numpy())
@@ -147,23 +137,6 @@ class Trainer:
             tf.contrib.summary.scalar('rewards/mean',
                                       self.rewards_moments.mean)
             tf.contrib.summary.scalar('rewards/std', self.rewards_moments.std)
-            tf.contrib.summary.scalar('time/rollout', rollout_time)
-            tf.contrib.summary.scalar('time/target', target_time)
-
-            if self.include_histograms:
-                for i in range(self.env.observation_space.shape[0]):
-                    tf.contrib.summary.histogram(
-                        'observations/{}/train'.format(i),
-                        observations[..., i])
-                for i in range(self.env.action_space.shape[0]):
-                    tf.contrib.summary.histogram('actions/{}/train'.format(i),
-                                                 actions[..., i])
-                tf.contrib.summary.histogram('rewards/train', rewards)
-                tf.contrib.summary.histogram('rewards_norm/train', rewards)
-                tf.contrib.summary.histogram('rewards_norm/train',
-                                             rewards_norm)
-                tf.contrib.summary.histogram('advantages/train', advantages)
-                tf.contrib.summary.histogram('returns/train', returns)
 
         with tf.device('/cpu:0'):
             dataset = tf.data.Dataset.from_tensor_slices(
@@ -179,12 +152,8 @@ class Trainer:
             else:
                 dataset = dataset.prefetch(mini_episodes)
 
-        inner_start_time = time.time()
-
         for (observations, actions, rewards_norm, advantages, returns,
              weights) in dataset:
-            start_time = time.time()
-
             with tf.GradientTape() as tape:
                 # forward passes
                 predictions = self.policy.forward(
@@ -215,11 +184,6 @@ class Trainer:
                     weights=weights * self.params.entropy_coef)
                 loss = policy_loss + value_loss + entropy_loss
 
-            end_time = time.time()
-            forward_time = end_time - start_time
-
-            start_time = time.time()
-
             # compute gradients
             grads = tape.gradient(loss, self.policy.trainable_variables)
             if self.params.grad_clipping is not None:
@@ -231,9 +195,6 @@ class Trainer:
             # optimization
             self.optimizer.apply_gradients(
                 grads_and_vars, global_step=self.global_step)
-
-            end_time = time.time()
-            gradient_time = end_time - start_time
 
             # summaries
             with tf.contrib.summary.always_record_summaries():
@@ -248,16 +209,9 @@ class Trainer:
                                           tf.global_norm(grads))
                 tf.contrib.summary.scalar('gradient_norm/clipped',
                                           tf.global_norm(grads_clipped))
-                tf.contrib.summary.scalar('time/forward', forward_time)
-                tf.contrib.summary.scalar('time/gradient', gradient_time)
 
                 tf.contrib.summary.scalar('scale_diag', self.policy.scale_diag)
                 tf.contrib.summary.scalar('entropy', entropy_mean)
-
-        inner_end_time = time.time()
-        inner_time = inner_end_time - inner_start_time
-        with tf.contrib.summary.always_record_summaries():
-            tf.contrib.summary.scalar('time/inner', inner_time)
 
     def _eval(self):
         with tf.device('/cpu:0'):
@@ -272,15 +226,6 @@ class Trainer:
         with tf.contrib.summary.always_record_summaries():
             tf.contrib.summary.scalar('episodic_rewards/eval',
                                       episodic_rewards)
-
-            if self.include_histograms:
-                for i in range(self.env.observation_space.shape[0]):
-                    tf.contrib.summary.histogram(
-                        'observations/{}/eval'.format(i), observations[..., i])
-                for i in range(self.env.action_space.shape[0]):
-                    tf.contrib.summary.histogram('actions/{}/eval'.format(i),
-                                                 actions[..., i])
-                tf.contrib.summary.histogram('rewards/eval', rewards)
 
         # save checkpoint
         checkpoint_prefix = os.path.join(self.job_dir, 'ckpt')
