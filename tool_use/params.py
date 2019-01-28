@@ -9,11 +9,11 @@ class HyperParams:
     seed = attr.ib(default=42)
 
     # training
-    train_iters = attr.ib(default=1000)
+    train_iters = attr.ib(default=10)
     episodes = attr.ib(default=12)
     num_envs = attr.ib(default=4)
     epochs = attr.ib(default=10)
-    horizon = attr.ib(default=200)
+    horizon = attr.ib(default=None)
     batch_size = attr.ib(default=1)
     eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)

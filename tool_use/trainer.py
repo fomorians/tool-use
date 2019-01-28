@@ -1,8 +1,9 @@
 import os
 import gym
+import sys
+import time
 import numpy as np
 import tensorflow as tf
-import tensorflow_probability as tfp
 
 import pyoneer as pynr
 import pyoneer.rl as pyrl
@@ -14,7 +15,9 @@ from tool_use.parallel_rollout import ParallelRollout
 
 class Trainer:
     def __init__(self, job_dir, params, include_histograms=False):
+        self.job_dir = job_dir
         self.params = params
+        self.include_histograms = include_histograms
 
         # environment
         def env_constructor():
@@ -63,9 +66,9 @@ class Trainer:
             self.checkpoint.restore(checkpoint_path)
 
         # summaries
-        summary_writer = tf.contrib.summary.create_file_writer(
+        self.summary_writer = tf.contrib.summary.create_file_writer(
             self.job_dir, max_queue=100, flush_millis=5 * 60 * 1000)
-        summary_writer.set_as_default()
+        self.summary_writer.set_as_default()
 
         # rollouts
         self.rollout = ParallelRollout(
@@ -75,10 +78,10 @@ class Trainer:
         # NOTE: TF eager does not initialize weights until they're called
         mock_observations = tf.zeros(
             shape=(1, 1, observation_size), dtype=np.float32)
-        self.policy(mock_observations, reset_state=True)
-        self.policy_anchor(mock_observations, reset_state=True)
-        self.policy.get_values(mock_observations, reset_state=True)
-        self.policy_anchor.get_values(mock_observations, reset_state=True)
+        mock_actions = tf.zeros(shape=(1, 1, action_size), dtype=np.float32)
+        self.policy.forward(mock_observations, mock_actions, reset_state=True)
+        self.policy_anchor.forward(
+            mock_observations, mock_actions, reset_state=True)
 
     def _train(self):
         # sync variables
@@ -86,31 +89,43 @@ class Trainer:
             source_variables=self.policy.variables,
             target_variables=self.policy_anchor.variables)
 
-        # training
-        states, actions, rewards, next_states, weights = self.rollout(
-            self.exploration_strategy, episodes=self.params.episodes)
+        # compute data
+        # force rollouts to cpu
+        with tf.device('/cpu:0'):
+            start_time = time.time()
+            (observations, actions, rewards, observations_next,
+             weights) = self.rollout(
+                 self.exploration_strategy, episodes=self.params.episodes)
+            end_time = time.time()
+            rollout_time = end_time - start_time
 
-        miniepisodes = (self.params.episodes *
-                        self.env.spec.max_episode_steps) // self.params.horizon
+        start_time = time.time()
 
-        states = states.reshape(miniepisodes, self.params.horizon,
-                                states.shape[-1])
-        actions = actions.reshape(miniepisodes, self.params.horizon,
-                                  actions.shape[-1])
-        rewards = rewards.reshape(miniepisodes, self.params.horizon)
-        next_states = next_states.reshape(miniepisodes, self.params.horizon,
-                                          next_states.shape[-1])
-        weights = weights.reshape(miniepisodes, self.params.horizon)
+        if self.params.horizon is not None:
+            mini_episodes = (
+                (self.params.episodes * self.env.spec.max_episode_steps) //
+                self.params.horizon)
+
+            observations = observations.reshape(
+                mini_episodes, self.params.horizon, observations.shape[-1])
+            actions = actions.reshape(mini_episodes, self.params.horizon,
+                                      actions.shape[-1])
+            rewards = rewards.reshape(mini_episodes, self.params.horizon)
+            observations_next = observations_next.reshape(
+                mini_episodes, self.params.horizon,
+                observations_next.shape[-1])
+            weights = weights.reshape(mini_episodes, self.params.horizon)
 
         self.rewards_moments(rewards, weights=weights, training=True)
 
         rewards_norm = pynr.math.safe_divide(rewards, self.rewards_moments.std)
 
-        values_target = self.policy.get_values(states, reset_state=True)
+        predictions = self.policy.forward(
+            observations, reset_state=True, include=['values'])
 
         advantages = pyrl.targets.generalized_advantages(
             rewards=rewards_norm,
-            values=values_target,
+            values=predictions['values'],
             discount_factor=self.params.discount_factor,
             lambda_factor=self.params.lambda_factor,
             weights=weights,
@@ -120,21 +135,28 @@ class Trainer:
             discount_factor=self.params.discount_factor,
             weights=weights)
 
+        end_time = time.time()
+        target_time = end_time - start_time
+
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
         print(self.global_step.numpy(), 'episodic_rewards/train',
               episodic_rewards.numpy())
 
+        # summaries
         with tf.contrib.summary.always_record_summaries():
             tf.contrib.summary.scalar('episodic_rewards/train',
                                       episodic_rewards)
             tf.contrib.summary.scalar('rewards/mean',
                                       self.rewards_moments.mean)
             tf.contrib.summary.scalar('rewards/std', self.rewards_moments.std)
+            tf.contrib.summary.scalar('time/rollout', rollout_time)
+            tf.contrib.summary.scalar('time/target', target_time)
 
             if self.include_histograms:
                 for i in range(self.env.observation_space.shape[0]):
-                    tf.contrib.summary.histogram('states/{}/train'.format(i),
-                                                 states[..., i])
+                    tf.contrib.summary.histogram(
+                        'observations/{}/train'.format(i),
+                        observations[..., i])
                 for i in range(self.env.action_space.shape[0]):
                     tf.contrib.summary.histogram('actions/{}/train'.format(i),
                                                  actions[..., i])
@@ -147,58 +169,78 @@ class Trainer:
 
         with tf.device('/cpu:0'):
             dataset = tf.data.Dataset.from_tensor_slices(
-                (states, actions, rewards_norm, advantages, returns, weights))
+                (observations, actions, rewards_norm, advantages, returns,
+                 weights))
             dataset = dataset.batch(self.params.batch_size)
             dataset = dataset.repeat(self.params.epochs)
-            dataset = dataset.apply(
-                tf.data.experimental.prefetch_to_device('/gpu:0'))
 
-        for (states, actions, rewards_norm, advantages, returns,
+            # prefetch to gpu if available
+            if tf.test.is_gpu_available():
+                dataset = dataset.apply(
+                    tf.data.experimental.prefetch_to_device('/gpu:0'))
+            else:
+                dataset = dataset.prefetch(mini_episodes)
+
+        inner_start_time = time.time()
+
+        for (observations, actions, rewards_norm, advantages, returns,
              weights) in dataset:
+            start_time = time.time()
+
             with tf.GradientTape() as tape:
                 # forward passes
-                policy_dist = self.policy(
-                    states, training=True, reset_state=True)
-                log_probs = policy_dist.log_prob(actions)
-
-                policy_anchor_dist = self.policy_anchor(
-                    states, reset_state=True)
-                log_probs_anchor = policy_anchor_dist.log_prob(actions)
-
-                entropy = policy_dist.entropy()
-                values = self.policy.get_values(
-                    states, training=True, reset_state=True)
+                predictions = self.policy.forward(
+                    observations,
+                    actions,
+                    training=True,
+                    reset_state=True,
+                    include=['log_probs', 'entropy', 'values'])
+                predictions_anchor = self.policy_anchor.forward(
+                    observations,
+                    actions,
+                    reset_state=True,
+                    include=['log_probs'])
 
                 # losses
                 policy_loss = pyrl.losses.clipped_policy_gradient_loss(
-                    log_probs=log_probs,
-                    log_probs_anchor=log_probs_anchor,
+                    log_probs=predictions['log_probs'],
+                    log_probs_anchor=predictions_anchor['log_probs'],
                     advantages=advantages,
                     epsilon_clipping=self.params.epsilon_clipping,
                     weights=weights)
                 value_loss = tf.losses.mean_squared_error(
-                    predictions=values,
+                    predictions=predictions['values'],
                     labels=returns,
                     weights=weights * self.params.value_coef)
                 entropy_loss = -tf.losses.compute_weighted_loss(
-                    losses=entropy, weights=weights * self.params.entropy_coef)
+                    losses=predictions['entropy'],
+                    weights=weights * self.params.entropy_coef)
                 loss = policy_loss + value_loss + entropy_loss
 
-            # optimization
+            end_time = time.time()
+            forward_time = end_time - start_time
+
+            start_time = time.time()
+
+            # compute gradients
             grads = tape.gradient(loss, self.policy.trainable_variables)
             if self.params.grad_clipping is not None:
                 grads_clipped, _ = tf.clip_by_global_norm(
                     grads, self.params.grad_clipping)
             grads_and_vars = zip(grads_clipped,
                                  self.policy.trainable_variables)
+
+            # optimization
             self.optimizer.apply_gradients(
                 grads_and_vars, global_step=self.global_step)
 
+            end_time = time.time()
+            gradient_time = end_time - start_time
+
+            # summaries
             with tf.contrib.summary.always_record_summaries():
-                kl = tfp.distributions.kl_divergence(policy_dist,
-                                                     policy_anchor_dist)
                 entropy_mean = tf.losses.compute_weighted_loss(
-                    losses=entropy, weights=weights)
+                    losses=predictions['entropy'], weights=weights)
 
                 tf.contrib.summary.scalar('loss/policy', policy_loss)
                 tf.contrib.summary.scalar('loss/value', value_loss)
@@ -208,14 +250,22 @@ class Trainer:
                                           tf.global_norm(grads))
                 tf.contrib.summary.scalar('gradient_norm/clipped',
                                           tf.global_norm(grads_clipped))
+                tf.contrib.summary.scalar('time/forward', forward_time)
+                tf.contrib.summary.scalar('time/gradient', gradient_time)
 
                 tf.contrib.summary.scalar('scale_diag', self.policy.scale_diag)
                 tf.contrib.summary.scalar('entropy', entropy_mean)
-                tf.contrib.summary.scalar('kl', kl)
+
+        inner_end_time = time.time()
+        inner_time = inner_end_time - inner_start_time
+        with tf.contrib.summary.always_record_summaries():
+            tf.contrib.summary.scalar('time/inner', inner_time)
 
     def _eval(self):
-        states, actions, rewards, next_states, weights = self.rollout(
-            self.inference_strategy, episodes=self.params.episodes)
+        with tf.device('/cpu:0'):
+            (observations, actions, rewards, observations_next,
+             weights) = self.rollout(
+                 self.inference_strategy, episodes=self.params.episodes)
 
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
         print(self.global_step.numpy(), 'episodic_rewards/eval',
@@ -227,8 +277,8 @@ class Trainer:
 
             if self.include_histograms:
                 for i in range(self.env.observation_space.shape[0]):
-                    tf.contrib.summary.histogram('states/{}/eval'.format(i),
-                                                 states[..., i])
+                    tf.contrib.summary.histogram(
+                        'observations/{}/eval'.format(i), observations[..., i])
                 for i in range(self.env.action_space.shape[0]):
                     tf.contrib.summary.histogram('actions/{}/eval'.format(i),
                                                  actions[..., i])
@@ -240,9 +290,29 @@ class Trainer:
 
     def train(self):
         for it in range(self.params.train_iters):
+            start_time = time.time()
+
             # training
             self._train()
 
+            end_time = time.time()
+            train_time = end_time - start_time
+
             # evaluation
             if it % self.params.eval_interval == self.params.eval_interval - 1:
+                start_time = time.time()
+
                 self._eval()
+
+                end_time = time.time()
+                eval_time = end_time - start_time
+
+                with tf.contrib.summary.always_record_summaries():
+                    tf.contrib.summary.scalar('time/eval', eval_time)
+
+            with tf.contrib.summary.always_record_summaries():
+                tf.contrib.summary.scalar('time/train', train_time)
+
+            sys.stdout.flush()
+
+            self.summary_writer.flush()

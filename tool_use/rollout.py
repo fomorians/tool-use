@@ -8,17 +8,17 @@ class Rollout:
         self.max_episode_steps = max_episode_steps
 
     def __call__(self, policy, episodes, render=False):
-        state_size = self.env.observation_space.shape[0]
+        observation_size = self.env.observation_space.shape[0]
         action_size = self.env.action_space.shape[0]
 
-        states = np.zeros(
-            shape=(episodes, self.max_episode_steps, state_size),
+        observations = np.zeros(
+            shape=(episodes, self.max_episode_steps, observation_size),
             dtype=np.float32)
         actions = np.zeros(
             shape=(episodes, self.max_episode_steps, action_size),
             dtype=np.float32)
-        next_states = np.zeros(
-            shape=(episodes, self.max_episode_steps, state_size),
+        observations_next = np.zeros(
+            shape=(episodes, self.max_episode_steps, observation_size),
             dtype=np.float32)
         rewards = np.zeros(
             shape=(episodes, self.max_episode_steps), dtype=np.float32)
@@ -26,7 +26,7 @@ class Rollout:
             shape=(episodes, self.max_episode_steps), dtype=np.float32)
 
         for episode in range(episodes):
-            state = self.env.reset()
+            observation = self.env.reset()
 
             for step in range(self.max_episode_steps):
                 if render:
@@ -34,24 +34,25 @@ class Rollout:
 
                 reset_state = (step == 0)
 
-                state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
+                observation_tensor = tf.convert_to_tensor(
+                    observation, dtype=tf.float32)
                 action_batch = policy(
-                    state_tensor[None, None, ...],
+                    observation_tensor[None, None, ...],
                     training=False,
                     reset_state=reset_state)
                 action = action_batch[0, 0].numpy()
 
-                next_state, reward, done, info = self.env.step(action)
+                observation_next, reward, done, info = self.env.step(action)
 
-                states[episode, step] = state
+                observations[episode, step] = observation
                 actions[episode, step] = action
-                next_states[episode, step] = next_state
+                observations_next[episode, step] = observation_next
                 rewards[episode, step] = reward
                 weights[episode, step] = 1.0
 
                 if done:
                     break
 
-                state = next_state
+                observation = observation_next
 
-        return states, actions, rewards, next_states, weights
+        return observations, actions, rewards, observations_next, weights

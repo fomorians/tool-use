@@ -2,27 +2,27 @@ import numpy as np
 import tensorflow as tf
 
 
-# TODO: Use concat approach to work with regular rollout. Multiprocessing?
+# TODO: use concat approach to work with regular rollout / env
 class ParallelRollout:
     def __init__(self, env, max_episode_steps):
         self.env = env
         self.max_episode_steps = max_episode_steps
 
     def __call__(self, policy, episodes):
-        state_size = self.env.observation_space.shape[0]
+        observation_size = self.env.observation_space.shape[0]
         action_size = self.env.action_space.shape[0]
 
         batch_size = len(self.env)
         batches = int(np.ceil(episodes / batch_size))
 
-        states = np.zeros(
-            shape=(episodes, self.max_episode_steps, state_size),
+        observations = np.zeros(
+            shape=(episodes, self.max_episode_steps, observation_size),
             dtype=np.float32)
         actions = np.zeros(
             shape=(episodes, self.max_episode_steps, action_size),
             dtype=np.float32)
-        next_states = np.zeros(
-            shape=(episodes, self.max_episode_steps, state_size),
+        observations_next = np.zeros(
+            shape=(episodes, self.max_episode_steps, observation_size),
             dtype=np.float32)
         rewards = np.zeros(
             shape=(episodes, self.max_episode_steps), dtype=np.float32)
@@ -42,24 +42,26 @@ class ParallelRollout:
 
             episode_done = np.zeros(shape=slice_size, dtype=np.bool)
 
-            state = self.env.reset()
+            observation = self.env.reset()
 
             for step in range(self.max_episode_steps):
                 reset_state = (step == 0)
 
-                state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
+                observation_tensor = tf.convert_to_tensor(
+                    observation, dtype=tf.float32)
                 action_batch = policy(
-                    state_tensor[:, None, ...],
+                    observation_tensor[:, None, ...],
                     training=False,
                     reset_state=reset_state)
                 action = action_batch[:, 0].numpy()
 
-                next_state, reward, done, info = self.env.step(action)
+                observation_next, reward, done, info = self.env.step(action)
 
-                states[batch_start:batch_end, step] = state[:slice_size]
+                observations[batch_start:batch_end,
+                             step] = observation[:slice_size]
                 actions[batch_start:batch_end, step] = action[:slice_size]
-                next_states[batch_start:batch_end, step] = (
-                    next_state[:slice_size])
+                observations_next[batch_start:batch_end, step] = (
+                    observation_next[:slice_size])
                 rewards[batch_start:batch_end, step] = reward[:slice_size]
 
                 for i in range(slice_size):
@@ -74,6 +76,6 @@ class ParallelRollout:
                 if np.all(episode_done):
                     break
 
-                state = next_state
+                observation = observation_next
 
-        return states, actions, rewards, next_states, weights
+        return observations, actions, rewards, observations_next, weights

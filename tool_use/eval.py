@@ -54,7 +54,7 @@ def main():
 
     # rollouts
     render = (args.render and args.env != 'KukaEnv-v0')
-    states, actions, rewards, next_states, weights = rollout(
+    observations, actions, rewards, observations_next, weights = rollout(
         inference_strategy, episodes=args.episodes, render=render)
     episodic_reward = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
     print('episodic_reward:', episodic_reward.numpy())

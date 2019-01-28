@@ -20,7 +20,7 @@ class PolicyValue(tf.keras.Model):
             units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
-        self.dense_loc_hidden = tf.keras.layers.Dense(
+        self.dense_hidden_loc = tf.keras.layers.Dense(
             units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
@@ -28,11 +28,11 @@ class PolicyValue(tf.keras.Model):
             units=action_size,
             activation=tf.math.tanh,
             kernel_initializer=logits_initializer)
-        self.dense_value_hidden = tf.keras.layers.Dense(
+        self.dense_hidden_values = tf.keras.layers.Dense(
             units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer)
-        self.dense_value = tf.keras.layers.Dense(
+        self.dense_values = tf.keras.layers.Dense(
             units=1, activation=None, kernel_initializer=logits_initializer)
 
         self.scale_diag_inverse = tfe.Variable(
@@ -42,26 +42,49 @@ class PolicyValue(tf.keras.Model):
     def scale_diag(self):
         return tf.nn.softplus(self.scale_diag_inverse)
 
-    def _forward(self, inputs, training=None, reset_state=None):
-        inputs = tf.convert_to_tensor(inputs, dtype=self.dtype)
-        hidden = self.dense_hidden1(inputs)
-        hidden = self.dense_hidden2(hidden)
-        return hidden
-
     @tfe.defun
-    def get_values(self, inputs, training=None, reset_state=None):
-        hidden = self._forward(
-            inputs, training=training, reset_state=reset_state)
-        hidden = self.dense_value_hidden(hidden)
-        value = self.dense_value(hidden)
-        return value[..., 0]
+    def forward(self,
+                observations,
+                actions=None,
+                training=None,
+                reset_state=None,
+                include=None):
+        if include is None:
+            include = ['log_probs', 'entropy', 'values']
 
-    @tfe.defun
-    def call(self, inputs, training=None, reset_state=None):
-        hidden = self._forward(
-            inputs, training=training, reset_state=reset_state)
-        hidden = self.dense_loc_hidden(hidden)
-        loc = self.dense_loc(hidden)
+        observations = tf.convert_to_tensor(observations, dtype=self.dtype)
+
+        hidden_shared = self.dense_hidden1(observations)
+        hidden_shared = self.dense_hidden2(hidden_shared)
+
+        predictions = {}
+
+        if 'values' in include:
+            hidden_values = self.dense_hidden_values(hidden_shared)
+            values = self.dense_values(hidden_values)
+            predictions['values'] = values[..., 0]
+
+        if 'log_probs' in include or 'entropy' in include:
+            hidden_loc = self.dense_hidden_loc(hidden_shared)
+            loc = self.dense_loc(hidden_loc)
+            dist = tfp.distributions.MultivariateNormalDiag(
+                loc=loc, scale_diag=self.scale_diag)
+
+            if 'log_probs' in include:
+                assert actions is not None
+                predictions['log_probs'] = dist.log_prob(actions)
+
+            if 'entropy' in include:
+                predictions['entropy'] = dist.entropy()
+
+        return predictions
+
+    def call(self, observations, training=None, reset_state=None):
+        observations = tf.convert_to_tensor(observations, dtype=self.dtype)
+        hidden_shared = self.dense_hidden1(observations)
+        hidden_shared = self.dense_hidden2(hidden_shared)
+        hidden_loc = self.dense_hidden_loc(hidden_shared)
+        loc = self.dense_loc(hidden_loc)
         dist = tfp.distributions.MultivariateNormalDiag(
             loc=loc, scale_diag=self.scale_diag)
         return dist

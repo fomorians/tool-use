@@ -233,28 +233,13 @@ class KukaEnv(gym.Env):
         p.disconnect()
 
 
-# register kuka env
-gym.envs.register(
-    id='KukaEnv-v0',
-    entry_point='tool_use.kuka_env:KukaEnv',
-    max_episode_steps=200,
-    kwargs=dict(should_render=False))
-gym.envs.register(
-    id='KukaEnvRender-v0',
-    entry_point='tool_use.kuka_env:KukaEnv',
-    max_episode_steps=200,
-    kwargs=dict(should_render=True))
-
-
 def main():
     env = gym.make('KukaEnvRender-v0')
-
-    episodes = 100
-    for episode in range(episodes):
+    for episode in range(100):
         env.reset()
         for step in range(env.spec.max_episode_steps):
             action = np.zeros_like(env.action_space.sample())
-            next_state, reward, done, info = env.step(action)
+            observation_next, reward, done, info = env.step(action)
             if done:
                 break
 
