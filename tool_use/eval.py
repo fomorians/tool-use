@@ -20,13 +20,6 @@ def main():
     parser.add_argument('--render', action='store_true')
     args = parser.parse_args()
 
-    # register kuka env
-    gym.envs.register(
-        id='KukaEnv-v0',
-        entry_point='tool_use.kuka_env:KukaEnv',
-        max_episode_steps=200,
-        kwargs=dict(should_render=args.render))
-
     # params
     params = HyperParams(env=args.env, seed=args.seed)
 
