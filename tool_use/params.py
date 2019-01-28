@@ -13,7 +13,7 @@ class HyperParams:
     episodes = attr.ib(default=12)
     num_envs = attr.ib(default=4)
     epochs = attr.ib(default=10)
-    horizon = attr.ib(default=None)
+    horizon = attr.ib(default=200)
     batch_size = attr.ib(default=1)
     eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)
