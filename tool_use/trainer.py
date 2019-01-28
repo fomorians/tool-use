@@ -101,20 +101,18 @@ class Trainer:
 
         start_time = time.time()
 
-        if self.params.horizon is not None:
-            mini_episodes = (
-                (self.params.episodes * self.env.spec.max_episode_steps) //
-                self.params.horizon)
+        mini_episodes = (
+            (self.params.episodes * self.env.spec.max_episode_steps) //
+            self.params.horizon)
 
-            observations = observations.reshape(
-                mini_episodes, self.params.horizon, observations.shape[-1])
-            actions = actions.reshape(mini_episodes, self.params.horizon,
-                                      actions.shape[-1])
-            rewards = rewards.reshape(mini_episodes, self.params.horizon)
-            observations_next = observations_next.reshape(
-                mini_episodes, self.params.horizon,
-                observations_next.shape[-1])
-            weights = weights.reshape(mini_episodes, self.params.horizon)
+        observations = observations.reshape(mini_episodes, self.params.horizon,
+                                            observations.shape[-1])
+        actions = actions.reshape(mini_episodes, self.params.horizon,
+                                  actions.shape[-1])
+        rewards = rewards.reshape(mini_episodes, self.params.horizon)
+        observations_next = observations_next.reshape(
+            mini_episodes, self.params.horizon, observations_next.shape[-1])
+        weights = weights.reshape(mini_episodes, self.params.horizon)
 
         self.rewards_moments(rewards, weights=weights, training=True)
 
