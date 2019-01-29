@@ -1,13 +1,25 @@
 import gym
 
+max_episode_steps = 200
+
 # register kuka env
 gym.envs.register(
-    id='KukaEnv-v0',
+    id='KukaVelocityEnv-v0',
     entry_point='tool_use.kuka_env:KukaEnv',
-    max_episode_steps=200,
-    kwargs=dict(should_render=False))
+    max_episode_steps=max_episode_steps,
+    kwargs=dict(should_render=False, position_control=False))
 gym.envs.register(
-    id='KukaEnvRender-v0',
+    id='KukaVelocityRenderEnv-v0',
     entry_point='tool_use.kuka_env:KukaEnv',
-    max_episode_steps=200,
-    kwargs=dict(should_render=True))
+    max_episode_steps=max_episode_steps,
+    kwargs=dict(should_render=True, position_control=False))
+gym.envs.register(
+    id='KukaPositionEnv-v0',
+    entry_point='tool_use.kuka_env:KukaEnv',
+    max_episode_steps=max_episode_steps,
+    kwargs=dict(should_render=False, position_control=True))
+gym.envs.register(
+    id='KukaPositionRenderEnv-v0',
+    entry_point='tool_use.kuka_env:KukaEnv',
+    max_episode_steps=max_episode_steps,
+    kwargs=dict(should_render=True, position_control=True))

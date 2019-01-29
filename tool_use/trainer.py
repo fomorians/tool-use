@@ -2,7 +2,6 @@ import os
 import gym
 import sys
 import time
-import numpy as np
 import tensorflow as tf
 
 import pyoneer as pynr
@@ -75,8 +74,8 @@ class Trainer:
         # prime models
         # NOTE: TF eager does not initialize weights until they're called
         mock_observations = tf.zeros(
-            shape=(1, 1, observation_size), dtype=np.float32)
-        mock_actions = tf.zeros(shape=(1, 1, action_size), dtype=np.float32)
+            shape=(1, 1, observation_size), dtype=tf.float32)
+        mock_actions = tf.zeros(shape=(1, 1, action_size), dtype=tf.float32)
         self.policy.forward(mock_observations, mock_actions, reset_state=True)
         self.policy_anchor.forward(
             mock_observations, mock_actions, reset_state=True)
@@ -109,7 +108,11 @@ class Trainer:
 
         self.rewards_moments(rewards, weights=weights, training=True)
 
-        rewards_norm = pynr.math.safe_divide(rewards, self.rewards_moments.std)
+        rewards_norm = pynr.math.normalize(
+            rewards,
+            loc=self.rewards_moments.mean,
+            scale=self.rewards_moments.std,
+            weights=weights)
 
         predictions = self.policy.forward(
             observations, reset_state=True, include=['values'])
@@ -182,7 +185,9 @@ class Trainer:
                 entropy_loss = -tf.losses.compute_weighted_loss(
                     losses=predictions['entropy'],
                     weights=weights * self.params.entropy_coef)
-                loss = policy_loss + value_loss + entropy_loss
+                regularization_loss = tf.add_n(self.policy.losses)
+                loss = (policy_loss + value_loss + entropy_loss +
+                        regularization_loss)
 
             # compute gradients
             grads = tape.gradient(loss, self.policy.trainable_variables)
@@ -204,6 +209,8 @@ class Trainer:
                 tf.contrib.summary.scalar('loss/policy', policy_loss)
                 tf.contrib.summary.scalar('loss/value', value_loss)
                 tf.contrib.summary.scalar('loss/entropy', entropy_loss)
+                tf.contrib.summary.scalar('loss/regularization',
+                                          regularization_loss)
 
                 tf.contrib.summary.scalar('gradient_norm',
                                           tf.global_norm(grads))

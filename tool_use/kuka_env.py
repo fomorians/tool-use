@@ -13,7 +13,8 @@ from tool_use.kuka import Kuka
 class KukaEnv(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
 
-    def __init__(self, should_render=False):
+    def __init__(self, should_render=False, position_control=False):
+        self.position_control = position_control
         self.should_render = should_render
         self.time_step = 1 / 240
         self.gravity = -9.8
@@ -44,28 +45,32 @@ class KukaEnv(gym.Env):
             dtype=np.float32)
         joint_velocities_low = -joint_velocities_high
 
-        action_high = np.full(
-            shape=Kuka.num_joints,
-            fill_value=Kuka.max_velocity,
-            dtype=np.float32)
+        if self.position_control:
+            action_high = Kuka.joint_limits
+        else:
+            action_high = np.full(
+                shape=Kuka.num_joints,
+                fill_value=Kuka.max_velocity,
+                dtype=np.float32)
         action_low = -action_high
 
-        end_high = np.array([1, 1, 1], dtype=np.float32)
-        end_low = np.array([-1, -1, 0], dtype=np.float32)
+        joint_torques_high = np.full(
+            shape=Kuka.num_joints, fill_value=Kuka.max_force, dtype=np.float32)
+        joint_torques_low = -joint_torques_high
 
-        goal_high = np.array([1, 1, 1], dtype=np.float32)
-        goal_low = np.array([-1, -1, 0], dtype=np.float32)
+        goal_high = np.array([2, 2, 1], dtype=np.float32)
+        goal_low = np.array([-2, -2, -1], dtype=np.float32)
 
         reward_high = np.array([0.0], dtype=np.float32)
         reward_low = np.array([-4.0], dtype=np.float32)
 
         observation_high = np.concatenate([
-            joint_position_high, joint_velocities_high, end_high, goal_high,
-            action_high, reward_high
+            joint_position_high, joint_velocities_high, joint_torques_high,
+            goal_high, action_high, reward_high
         ])
         observation_low = np.concatenate([
-            joint_position_low, joint_velocities_low, end_low, goal_low,
-            action_low, reward_low
+            joint_position_low, joint_velocities_low, joint_torques_low,
+            goal_low, action_low, reward_low
         ])
 
         self.observation_space = spaces.Box(
@@ -103,8 +108,9 @@ class KukaEnv(gym.Env):
 
         # rejection sampling to find pose which does not intersect
         while True:
-            joint_states = self._get_init_joint_states(randomize=False)
-            self.kuka.reset_joint_states(joint_states)
+            joint_states = self._get_init_joint_states(randomize=True)
+            joint_velocities = self._get_init_joint_states(randomize=True)
+            self.kuka.reset_joint_states(joint_states, joint_velocities)
 
             p.stepSimulation()
 
@@ -127,6 +133,15 @@ class KukaEnv(gym.Env):
             return [
                 np.random.uniform(-Kuka.joint_limits[joint_index],
                                   Kuka.joint_limits[joint_index])
+                for joint_index in range(Kuka.num_joints)
+            ]
+        else:
+            return [0.0] * Kuka.num_joints
+
+    def _get_init_joint_velocities(self, randomize=False):
+        if randomize:
+            return [
+                np.random.uniform(-Kuka.max_velocity, Kuka.max_velocity)
                 for joint_index in range(Kuka.num_joints)
             ]
         else:
@@ -178,26 +193,28 @@ class KukaEnv(gym.Env):
         end_pos = self._get_end_pos()
         return goal_pos - end_pos
 
-    def _get_joint_positions(self):
-        return np.array([
-            joint_state.jointPosition
-            for joint_state in self.kuka.get_joint_state()
-        ])
+    def _get_joint_positions(self, joint_states):
+        return np.array(
+            [joint_state.jointPosition for joint_state in joint_states])
 
-    def _get_joint_velocities(self):
+    def _get_joint_velocities(self, joint_states):
+        return np.array(
+            [joint_state.jointVelocity for joint_state in joint_states])
+
+    def _get_joint_torques(self, joint_states):
         return np.array([
-            joint_state.jointVelocity
-            for joint_state in self.kuka.get_joint_state()
+            joint_state.appliedJointMotorTorque for joint_state in joint_states
         ])
 
     def _get_observation(self):
-        joint_positions = self._get_joint_positions()
-        joint_velocities = self._get_joint_velocities()
-        end_pos = self._get_end_pos()
-        goal_pos = self._get_goal_pos()
+        joint_states = self.kuka.get_joint_states()
+        joint_positions = self._get_joint_positions(joint_states)
+        joint_velocities = self._get_joint_velocities(joint_states)
+        joint_torques = self._get_joint_torques(joint_states)
+        goal_pos = self._get_delta_pos()
         observation = np.concatenate(
             [
-                joint_positions, joint_velocities, end_pos, goal_pos,
+                joint_positions, joint_velocities, joint_torques, goal_pos,
                 self.prev_action, self.prev_reward
             ],
             axis=-1)
@@ -205,14 +222,23 @@ class KukaEnv(gym.Env):
 
     def _get_reward(self):
         delta_pos = self._get_delta_pos()
-        joint_velocities = self._get_joint_velocities()
+        joint_states = self.kuka.get_joint_states()
+        joint_velocities = self._get_joint_velocities(joint_states)
         reward = -np.sum(np.square(delta_pos))
-        reward += 0.0 * -np.sum(np.square(joint_velocities))
+        reward += 1e-3 * -np.sum(np.square(joint_velocities))
+        print(reward)
         return reward
 
     def step(self, action):
+        # TODO: randomly apply a force to joints according to an OU process
+        # - applyExternalForce
+        # TODO: randomly spawn a block of random mass directed at joint COMs
         action = np.clip(action, self.action_space.low, self.action_space.high)
-        self.kuka.apply_joint_velocities(action)
+
+        if self.position_control:
+            self.kuka.apply_joint_positions(action)
+        else:
+            self.kuka.apply_joint_velocities(action)
 
         p.stepSimulation()
 
@@ -234,14 +260,23 @@ class KukaEnv(gym.Env):
 
 
 def main():
-    env = gym.make('KukaEnvRender-v0')
-    for episode in range(100):
+    env = gym.make('KukaVelocityRenderEnv-v0')
+    episodes = 1000
+    states = np.zeros(
+        shape=(episodes, env.spec.max_episode_steps,
+               env.observation_space.shape[0]))
+    rewards = np.zeros(shape=(episodes, env.spec.max_episode_steps))
+    for episode in range(episodes):
         env.reset()
         for step in range(env.spec.max_episode_steps):
-            action = np.zeros_like(env.action_space.sample())
+            action = env.action_space.sample()
             observation_next, reward, done, info = env.step(action)
+            states[episode, step] = observation_next
+            rewards[episode, step] = reward
             if done:
                 break
+    import ipdb
+    ipdb.set_trace()
 
 
 if __name__ == '__main__':

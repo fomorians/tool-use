@@ -30,6 +30,9 @@ def main():
     env = gym.make(args.env)
     env = RangeNormalize(env)
 
+    observation_size = env.observation_space.shape[0]
+    action_size = env.action_space.shape[0]
+
     # seeding
     env.seed(args.seed)
     random.seed(args.seed)
@@ -39,6 +42,11 @@ def main():
     # policies
     policy = models.PolicyValue(
         action_size=env.action_space.shape[0], scale=params.scale)
+
+    mock_observations = tf.zeros(
+        shape=(1, 1, observation_size), dtype=np.float32)
+    mock_actions = tf.zeros(shape=(1, 1, action_size), dtype=np.float32)
+    policy.forward(mock_observations, mock_actions, reset_state=True)
 
     # checkpoints
     checkpoint = tf.train.Checkpoint(policy=policy)

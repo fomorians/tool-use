@@ -30,7 +30,7 @@ class Kuka:
     end_effector_index = 6
     joint_indices = list(range(num_joints))
 
-    def __init__(self):
+    def __init__(self, enable_joint_sensors=False):
         data_path = pybullet_data.getDataPath()
         kuka_path = os.path.join(data_path, 'kuka_iiwa/model.urdf')
         self.kuka_id = p.loadURDF(
@@ -39,45 +39,65 @@ class Kuka:
             baseOrientation=p.getQuaternionFromEuler([0, 0, 0]),
             useFixedBase=True)
 
-    def reset_joint_states(self, target_values):
+        if enable_joint_sensors:
+            for joint_index in range(self.num_joints):
+                p.enableJointForceTorqueSensor(
+                    bodyUniqueId=self.kuka_id, jointIndex=joint_index)
+
+    def reset_joint_states(self, target_values, target_velocities):
         for joint_index in range(self.num_joints):
             target_value = target_values[joint_index]
+            target_velocity = target_velocities[joint_index]
             p.resetJointState(
                 bodyUniqueId=self.kuka_id,
                 jointIndex=joint_index,
-                targetValue=target_value)
+                targetValue=target_value,
+                targetVelocity=target_velocity)
 
     def get_joint_info(self):
+        joint_infos = []
         for joint_index in range(self.num_joints):
             joint_info = JointInfo(*p.getJointInfo(
                 bodyUniqueId=self.kuka_id, jointIndex=joint_index))
-            yield joint_info
+            joint_infos.append(joint_info)
+        return joint_infos
 
-    def get_joint_state(self):
+    def get_joint_states(self):
+        joint_states = []
         for joint_index in range(self.num_joints):
             joint_state = JointState(*p.getJointState(
                 bodyUniqueId=self.kuka_id, jointIndex=joint_index))
-            yield joint_state
+            joint_states.append(joint_state)
+        return joint_states
 
     def apply_joint_velocities(self, joint_velocities):
         joint_velocities = np.clip(joint_velocities, -self.max_velocity,
                                    self.max_velocity)
-        p.setJointMotorControlArray(
-            bodyIndex=self.kuka_id,
-            jointIndices=self.joint_indices,
-            controlMode=p.VELOCITY_CONTROL,
-            targetVelocities=joint_velocities,
-            forces=[self.max_force] * self.num_joints)
 
-    def apply_joint_positions(self, joint_positions):
-        joint_positions = np.clip(joint_positions, -self.max_velocity,
-                                  self.max_velocity)
+        for joint_index in range(self.num_joints):
+            p.setJointMotorControl2(
+                bodyIndex=self.kuka_id,
+                jointIndex=joint_index,
+                controlMode=p.VELOCITY_CONTROL,
+                targetVelocity=joint_velocities[joint_index],
+                force=self.max_force,
+                maxVelocity=self.max_velocity)
 
-        p.setJointMotorControlArray(
-            bodyIndex=self.kuka_id,
-            jointIndices=self.joint_indices,
-            controlMode=p.POSITION_CONTROL,
-            targetPositions=joint_positions,
-            targetVelocities=[0] * self.num_joints,
-            forces=[self.max_force] * self.num_joints,
-            positionGains=[0.05] * self.num_joints)
+    def apply_joint_positions(self,
+                              joint_positions,
+                              position_gain=0.3,
+                              velocity_gain=1.0):
+        joint_positions = np.clip(joint_positions, -self.joint_limits,
+                                  self.joint_limits)
+
+        for joint_index in range(self.num_joints):
+            p.setJointMotorControl2(
+                bodyIndex=self.kuka_id,
+                jointIndex=joint_index,
+                controlMode=p.POSITION_CONTROL,
+                targetPosition=joint_positions[joint_index],
+                targetVelocity=0.0,
+                force=self.max_force,
+                maxVelocity=self.max_velocity,
+                positionGain=position_gain,
+                velocityGain=velocity_gain)
