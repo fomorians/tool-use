@@ -224,9 +224,9 @@ class KukaEnv(gym.Env):
         delta_pos = self._get_delta_pos()
         joint_states = self.kuka.get_joint_states()
         joint_velocities = self._get_joint_velocities(joint_states)
-        reward = -np.sum(np.square(delta_pos))
-        reward += 1e-3 * -np.sum(np.square(joint_velocities))
-        print(reward)
+        delta_reward = -np.sum(np.square(delta_pos))
+        velocity_reward = 1e-4 * -np.sum(np.square(joint_velocities))
+        reward = delta_reward + velocity_reward
         return reward
 
     def step(self, action):
@@ -260,7 +260,7 @@ class KukaEnv(gym.Env):
 
 
 def main():
-    env = gym.make('KukaVelocityRenderEnv-v0')
+    env = gym.make('KukaPositionRenderEnv-v0')
     episodes = 1000
     states = np.zeros(
         shape=(episodes, env.spec.max_episode_steps,
