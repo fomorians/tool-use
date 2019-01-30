@@ -53,6 +53,11 @@ class Kuka:
                 jointIndex=joint_index,
                 targetValue=target_value,
                 targetVelocity=target_velocity)
+            p.setJointMotorControl2(
+                bodyIndex=self.kuka_id,
+                jointIndex=joint_index,
+                controlMode=p.VELOCITY_CONTROL,
+                force=0)
 
     def get_joint_info(self):
         joint_infos = []
@@ -69,6 +74,15 @@ class Kuka:
                 bodyUniqueId=self.kuka_id, jointIndex=joint_index))
             joint_states.append(joint_state)
         return joint_states
+
+    def apply_external_force(self, force):
+        for link_index in range(self.num_joints):
+            p.applyExternalForce(
+                objectUniqueId=self.kuka_id,
+                linkIndex=link_index,
+                forceObj=force,
+                posObj=[0, 0, 0],
+                flags=p.LINK_FRAME)
 
     def apply_joint_velocities(self, joint_velocities):
         joint_velocities = np.clip(joint_velocities, -self.max_velocity,
