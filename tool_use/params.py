@@ -10,13 +10,15 @@ class HyperParams:
     seed = attr.ib(default=42)
 
     # training
-    train_iters = attr.ib(default=400)
+    train_iters = attr.ib(default=1000)
     episodes = attr.ib(default=64)
     epochs = attr.ib(default=10)
     horizon = attr.ib(default=200)
     batch_size = attr.ib(default=64)
     eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)
+    l2_scale = attr.ib(default=0.0)
+    center_reward = attr.ib(default=True)
 
     # losses
     value_coef = attr.ib(default=1e-4)

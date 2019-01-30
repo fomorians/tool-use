@@ -13,11 +13,15 @@ from tool_use.kuka import Kuka
 class KukaEnv(gym.Env):
     metadata = {'render.modes': ['human', 'rgb_array']}
 
-    def __init__(self, should_render=False, position_control=False):
+    def __init__(self,
+                 should_render=False,
+                 position_control=False,
+                 velocity_penalty=0.0):
         self.position_control = position_control
         self.should_render = should_render
         self.time_step = 1 / 240
         self.gravity = -9.8
+        self.velocity_penalty = velocity_penalty
 
         dir_path = os.path.dirname(os.path.realpath(__file__))
         self.data_path = os.path.abspath(os.path.join(dir_path, 'data'))
@@ -108,8 +112,8 @@ class KukaEnv(gym.Env):
 
         # rejection sampling to find pose which does not intersect
         while True:
-            joint_states = self._get_init_joint_states(randomize=True)
-            joint_velocities = self._get_init_joint_states(randomize=True)
+            joint_states = self._get_init_joint_states(randomize=False)
+            joint_velocities = self._get_init_joint_velocities(randomize=False)
             self.kuka.reset_joint_states(joint_states, joint_velocities)
 
             p.stepSimulation()
@@ -225,7 +229,8 @@ class KukaEnv(gym.Env):
         joint_states = self.kuka.get_joint_states()
         joint_velocities = self._get_joint_velocities(joint_states)
         delta_reward = -np.sum(np.square(delta_pos))
-        velocity_reward = 1e-4 * -np.sum(np.square(joint_velocities))
+        velocity_reward = self.velocity_penalty * -np.sum(
+            np.square(joint_velocities))
         reward = delta_reward + velocity_reward
         return reward
 

@@ -108,11 +108,15 @@ class Trainer:
 
         self.rewards_moments(rewards, weights=weights, training=True)
 
-        rewards_norm = pynr.math.normalize(
-            rewards,
-            loc=self.rewards_moments.mean,
-            scale=self.rewards_moments.std,
-            weights=weights)
+        if self.params.center_reward:
+            rewards_norm = pynr.math.normalize(
+                rewards,
+                loc=self.rewards_moments.mean,
+                scale=self.rewards_moments.std,
+                weights=weights)
+        else:
+            rewards_norm = pynr.math.safe_divide(rewards,
+                                                 self.rewards_moments.std)
 
         predictions = self.policy.forward(
             observations, reset_state=True, include=['values'])

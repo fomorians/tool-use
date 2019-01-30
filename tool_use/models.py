@@ -5,24 +5,29 @@ import tensorflow_probability as tfp
 
 
 class PolicyValue(tf.keras.Model):
-    def __init__(self, action_size, scale, **kwargs):
+    def __init__(self, action_size, scale=1.0, l2_scale=0.0, **kwargs):
         super(PolicyValue, self).__init__(**kwargs)
 
         kernel_initializer = tf.keras.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.keras.initializers.VarianceScaling(scale=1.0)
         scale_initializer = pynr.initializers.SoftplusInverse(scale=scale)
-        kernel_regularizer = tf.keras.regularizers.l2(1e-4)
+        kernel_regularizer = tf.keras.regularizers.l2(l2_scale)
 
         # self.initial_hidden_state = tfe.Variable(
         #     tf.zeros(shape=[64]), trainable=True)
         # self.hidden_state = None
 
-        self.dense_hidden1 = tf.keras.layers.Dense(
+        self.dense_propio = tf.keras.layers.Dense(
             units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer,
             kernel_regularizer=kernel_regularizer)
-        self.dense_hidden2 = tf.keras.layers.Dense(
+        self.dense_external = tf.keras.layers.Dense(
+            units=64,
+            activation=pynr.nn.swish,
+            kernel_initializer=kernel_initializer,
+            kernel_regularizer=kernel_regularizer)
+        self.dense_hidden = tf.keras.layers.Dense(
             units=64,
             activation=pynr.nn.swish,
             kernel_initializer=kernel_initializer,
@@ -60,9 +65,11 @@ class PolicyValue(tf.keras.Model):
     def _get_embedding(self, observations, training=None, reset_state=None):
         observations = tf.convert_to_tensor(observations, dtype=self.dtype)
 
-        # TODO: separate ego-centric features
-        hidden = self.dense_hidden1(observations)
-        hidden = self.dense_hidden2(hidden)
+        # separate ego-centric features
+        hidden_proprio = self.dense_propio(observations[..., :7 * 3])
+        hidden_external = self.dense_external(observations[..., 7 * 3:])
+        hidden = tf.concat([hidden_proprio, hidden_external], axis=-1)
+        hidden = self.dense_hidden(hidden)
 
         # if self.hidden_state is None or reset_state:
         #     batch_size = observations.shape[0]
