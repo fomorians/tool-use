@@ -17,7 +17,7 @@ class KukaEnv(gym.Env):
     def __init__(self,
                  should_render=False,
                  position_control=True,
-                 velocity_penalty=1e-4,
+                 velocity_penalty=5e-4,
                  enable_wind=False,
                  enable_blocks=False):
         self.position_control = position_control
@@ -82,11 +82,11 @@ class KukaEnv(gym.Env):
 
         observation_high = np.concatenate([
             joint_position_high, joint_velocities_high, joint_torques_high,
-            delta_high, action_high, reward_high
+            action_high, delta_high, reward_high
         ])
         observation_low = np.concatenate([
             joint_position_low, joint_velocities_low, joint_torques_low,
-            delta_low, action_low, reward_low
+            action_low, delta_low, reward_low
         ])
 
         self.observation_space = spaces.Box(
@@ -159,8 +159,8 @@ class KukaEnv(gym.Env):
             return [0.0] * Kuka.num_joints
 
     def _sample_hemisphere_surface(self, scale=1.0):
-        u = np.random.uniform(-1, 1) * scale
-        v = np.random.uniform(-1, 1) * scale
+        u = np.random.uniform(0, 1) * scale
+        v = np.random.uniform(0, 1) * scale
 
         rho = np.sqrt(u)
         theta = v * np.pi * 2
@@ -244,8 +244,8 @@ class KukaEnv(gym.Env):
         delta_pos = self._get_delta_pos()
         observation = np.concatenate(
             [
-                joint_positions, joint_velocities, joint_torques, delta_pos,
-                self.prev_action, self.prev_reward
+                joint_positions, joint_velocities, joint_torques,
+                self.prev_action, delta_pos, self.prev_reward
             ],
             axis=-1)
         return observation

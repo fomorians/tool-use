@@ -12,4 +12,8 @@ gym.envs.register(
     id='KukaPositionRenderEnv-v0',
     entry_point='tool_use.kuka_env:KukaEnv',
     max_episode_steps=max_episode_steps,
-    kwargs=dict(should_render=True, enable_wind=False, enable_blocks=True))
+    kwargs=dict(
+        should_render=True,
+        enable_wind=False,
+        enable_blocks=True,
+        velocity_penalty=0.0))

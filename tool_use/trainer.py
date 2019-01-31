@@ -41,8 +41,6 @@ class Trainer:
         # models
         self.policy = models.PolicyValue(
             action_size=action_size, scale=self.params.scale)
-        self.policy_anchor = models.PolicyValue(
-            action_size=action_size, scale=self.params.scale)
 
         # strategies
         self.exploration_strategy = pyrl.strategies.SampleStrategy(self.policy)
@@ -77,15 +75,8 @@ class Trainer:
             shape=(1, 1, observation_size), dtype=tf.float32)
         mock_actions = tf.zeros(shape=(1, 1, action_size), dtype=tf.float32)
         self.policy.forward(mock_observations, mock_actions, reset_state=True)
-        self.policy_anchor.forward(
-            mock_observations, mock_actions, reset_state=True)
 
     def _train(self):
-        # sync variables
-        pynr.training.update_target_variables(
-            source_variables=self.policy.variables,
-            target_variables=self.policy_anchor.variables)
-
         # compute data
         # force rollouts to cpu
         with tf.device('/cpu:0'):
@@ -119,7 +110,12 @@ class Trainer:
                                                  self.rewards_moments.std)
 
         predictions = self.policy.forward(
-            observations, reset_state=True, include=['values'])
+            observations,
+            actions,
+            reset_state=True,
+            include=['log_probs', 'values'])
+        values = predictions['values']
+        log_probs = predictions['log_probs']
 
         advantages = pyrl.targets.generalized_advantages(
             rewards=rewards_norm,
@@ -148,7 +144,7 @@ class Trainer:
         with tf.device('/cpu:0'):
             dataset = tf.data.Dataset.from_tensor_slices(
                 (observations, actions, rewards_norm, advantages, returns,
-                 weights))
+                 log_probs, weights))
             dataset = dataset.batch(self.params.batch_size)
             dataset = dataset.repeat(self.params.epochs)
 
@@ -160,7 +156,7 @@ class Trainer:
                 dataset = dataset.prefetch(mini_episodes)
 
         for (observations, actions, rewards_norm, advantages, returns,
-             weights) in dataset:
+             log_probs_anchor, weights) in dataset:
             with tf.GradientTape() as tape:
                 # forward passes
                 predictions = self.policy.forward(
@@ -169,26 +165,23 @@ class Trainer:
                     training=True,
                     reset_state=True,
                     include=['log_probs', 'entropy', 'values'])
-                predictions_anchor = self.policy_anchor.forward(
-                    observations,
-                    actions,
-                    reset_state=True,
-                    include=['log_probs'])
+                log_probs = predictions['log_probs']
+                entropy = predictions['entropy']
+                values = predictions['values']
 
                 # losses
                 policy_loss = pyrl.losses.clipped_policy_gradient_loss(
-                    log_probs=predictions['log_probs'],
-                    log_probs_anchor=predictions_anchor['log_probs'],
+                    log_probs=log_probs,
+                    log_probs_anchor=log_probs_anchor,
                     advantages=advantages,
                     epsilon_clipping=self.params.epsilon_clipping,
                     weights=weights)
                 value_loss = tf.losses.mean_squared_error(
-                    predictions=predictions['values'],
+                    predictions=values,
                     labels=returns,
                     weights=weights * self.params.value_coef)
                 entropy_loss = -tf.losses.compute_weighted_loss(
-                    losses=predictions['entropy'],
-                    weights=weights * self.params.entropy_coef)
+                    losses=entropy, weights=weights * self.params.entropy_coef)
                 regularization_loss = tf.add_n(self.policy.losses)
                 loss = (policy_loss + value_loss + entropy_loss +
                         regularization_loss)
@@ -267,6 +260,6 @@ class Trainer:
             with tf.contrib.summary.always_record_summaries():
                 tf.contrib.summary.scalar('time/train', train_time)
 
+            # flush each iteration
             sys.stdout.flush()
-
             self.summary_writer.flush()
