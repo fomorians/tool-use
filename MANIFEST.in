@@ -1,4 +1,5 @@
 recursive-include tool_use/data *.urdf
 recursive-include tool_use/data/kuka_iiwa *.urdf
 recursive-include tool_use/data/kuka_iiwa/meshes *.stl
+recursive-include tool_use/data/kuka_iiwa/meshes *.obj
 recursive-include tool_use/data/kuka_iiwa/meshes *.mtl
