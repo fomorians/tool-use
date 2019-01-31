@@ -7,7 +7,7 @@ import tensorflow as tf
 import pyoneer as pynr
 import pyoneer.rl as pyrl
 
-from tool_use import models
+from tool_use.models import Model
 from tool_use.wrappers import RangeNormalize
 from tool_use.parallel_rollout import ParallelRollout
 
@@ -39,12 +39,11 @@ class Trainer:
             learning_rate=self.params.learning_rate)
 
         # models
-        self.policy = models.PolicyValue(
-            action_size=action_size, scale=self.params.scale)
+        self.model = Model(action_size=action_size, scale=self.params.scale)
 
         # strategies
-        self.exploration_strategy = pyrl.strategies.SampleStrategy(self.policy)
-        self.inference_strategy = pyrl.strategies.ModeStrategy(self.policy)
+        self.exploration_strategy = pyrl.strategies.SampleStrategy(self.model)
+        self.inference_strategy = pyrl.strategies.ModeStrategy(self.model)
 
         # normalization
         self.rewards_moments = pynr.nn.ExponentialMovingMoments(
@@ -54,7 +53,7 @@ class Trainer:
         self.checkpoint = tf.train.Checkpoint(
             global_step=self.global_step,
             optimizer=self.optimizer,
-            policy=self.policy,
+            model=self.model,
             rewards_moments=self.rewards_moments)
         checkpoint_path = tf.train.latest_checkpoint(self.job_dir)
         if checkpoint_path is not None:
@@ -68,13 +67,6 @@ class Trainer:
         # rollouts
         self.rollout = ParallelRollout(
             self.env, max_episode_steps=self.env.spec.max_episode_steps)
-
-        # prime models
-        # NOTE: TF eager does not initialize weights until they're called
-        mock_observations = tf.zeros(
-            shape=(1, 1, observation_size), dtype=tf.float32)
-        mock_actions = tf.zeros(shape=(1, 1, action_size), dtype=tf.float32)
-        self.policy.forward(mock_observations, mock_actions, reset_state=True)
 
     def _train(self):
         # compute data
@@ -109,13 +101,10 @@ class Trainer:
             rewards_norm = pynr.math.safe_divide(rewards,
                                                  self.rewards_moments.std)
 
-        predictions = self.policy.forward(
-            observations,
-            actions,
-            reset_state=True,
-            include=['log_probs', 'values'])
+        predictions = self.model.forward(
+            observations, actions, include=['log_probs', 'values'])
         values = predictions['values']
-        log_probs = predictions['log_probs']
+        log_probs_anchor = predictions['log_probs']
 
         advantages = pyrl.targets.generalized_advantages(
             rewards=rewards_norm,
@@ -143,8 +132,8 @@ class Trainer:
 
         with tf.device('/cpu:0'):
             dataset = tf.data.Dataset.from_tensor_slices(
-                (observations, actions, rewards_norm, advantages, returns,
-                 log_probs, weights))
+                (observations, actions, observations_next, rewards_norm,
+                 advantages, returns, log_probs_anchor, weights))
             dataset = dataset.batch(self.params.batch_size)
             dataset = dataset.repeat(self.params.epochs)
 
@@ -155,19 +144,21 @@ class Trainer:
             else:
                 dataset = dataset.prefetch(mini_episodes)
 
-        for (observations, actions, rewards_norm, advantages, returns,
-             log_probs_anchor, weights) in dataset:
+        for (observations, actions, observations_next, rewards_norm,
+             advantages, returns, log_probs_anchor, weights) in dataset:
             with tf.GradientTape() as tape:
                 # forward passes
-                predictions = self.policy.forward(
-                    observations,
-                    actions,
-                    training=True,
-                    reset_state=True,
-                    include=['log_probs', 'entropy', 'values'])
+                predictions = self.model.forward(
+                    observations, actions, observations_next, training=True)
                 log_probs = predictions['log_probs']
                 entropy = predictions['entropy']
                 values = predictions['values']
+
+                forward_preds = predictions['observations_next_embedding_pred']
+                forward_labels = predictions['observations_next_embedding']
+
+                inverse_preds = predictions['actions_embedding_pred']
+                inverse_labels = predictions['actions_embedding']
 
                 # losses
                 policy_loss = pyrl.losses.clipped_policy_gradient_loss(
@@ -182,17 +173,29 @@ class Trainer:
                     weights=weights * self.params.value_coef)
                 entropy_loss = -tf.losses.compute_weighted_loss(
                     losses=entropy, weights=weights * self.params.entropy_coef)
-                regularization_loss = tf.add_n(self.policy.losses)
-                loss = (policy_loss + value_loss + entropy_loss +
-                        regularization_loss)
+                forward_loss = tf.losses.mean_squared_error(
+                    predictions=forward_preds,
+                    labels=forward_labels,
+                    weights=weights[..., None] * self.params.forward_coef)
+                inverse_loss = tf.losses.mean_squared_error(
+                    predictions=inverse_preds,
+                    labels=inverse_labels,
+                    weights=weights[..., None] * self.params.inverse_coef)
+                regularization_loss = tf.add_n([
+                    tf.nn.l2_loss(tvar) * self.params.l2_coef
+                    for tvar in self.model.trainable_variables
+                ])
+                loss = tf.add_n([
+                    policy_loss, value_loss, entropy_loss, forward_loss,
+                    inverse_loss, regularization_loss
+                ])
 
             # compute gradients
-            grads = tape.gradient(loss, self.policy.trainable_variables)
+            grads = tape.gradient(loss, self.model.trainable_variables)
             if self.params.grad_clipping is not None:
                 grads_clipped, _ = tf.clip_by_global_norm(
                     grads, self.params.grad_clipping)
-            grads_and_vars = zip(grads_clipped,
-                                 self.policy.trainable_variables)
+            grads_and_vars = zip(grads_clipped, self.model.trainable_variables)
 
             # optimization
             self.optimizer.apply_gradients(
@@ -206,6 +209,8 @@ class Trainer:
                 tf.contrib.summary.scalar('loss/policy', policy_loss)
                 tf.contrib.summary.scalar('loss/value', value_loss)
                 tf.contrib.summary.scalar('loss/entropy', entropy_loss)
+                tf.contrib.summary.scalar('loss/forward', forward_loss)
+                tf.contrib.summary.scalar('loss/inverse', inverse_loss)
                 tf.contrib.summary.scalar('loss/regularization',
                                           regularization_loss)
 
@@ -214,7 +219,8 @@ class Trainer:
                 tf.contrib.summary.scalar('gradient_norm/clipped',
                                           tf.global_norm(grads_clipped))
 
-                tf.contrib.summary.scalar('scale_diag', self.policy.scale_diag)
+                tf.contrib.summary.scalar('scale_diag',
+                                          self.model.policy.scale_diag)
                 tf.contrib.summary.scalar('entropy', entropy_mean)
 
     def _eval(self):

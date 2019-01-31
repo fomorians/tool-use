@@ -17,12 +17,14 @@ class HyperParams:
     batch_size = attr.ib(default=64)
     eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)
-    l2_scale = attr.ib(default=0.0)
     center_reward = attr.ib(default=True)
 
     # losses
     value_coef = attr.ib(default=1e-4)
     entropy_coef = attr.ib(default=0.0)
+    forward_coef = attr.ib(default=0.01)
+    inverse_coef = attr.ib(default=0.01)
+    l2_coef = attr.ib(default=0.0)
 
     # optimization
     learning_rate = attr.ib(default=1e-3)

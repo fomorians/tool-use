@@ -253,7 +253,10 @@ class KukaEnv(gym.Env):
     def _spawn_goal(self, pos, orn):
         block_path = os.path.join(self.data_path, 'goal.urdf')
         block_id = p.loadURDF(
-            fileName=block_path, basePosition=pos, baseOrientation=orn)
+            fileName=block_path,
+            basePosition=pos,
+            baseOrientation=orn,
+            useFixedBase=True)
         return block_id
 
     def _spawn_distractor(self, pos, orn, global_scaling, velocity):
@@ -262,7 +265,6 @@ class KukaEnv(gym.Env):
             fileName=block_path,
             basePosition=pos,
             baseOrientation=orn,
-            useFixedBase=False,
             globalScaling=global_scaling)
         p.resetBaseVelocity(
             objectUniqueId=block_id,
