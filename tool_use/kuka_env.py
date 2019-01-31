@@ -17,7 +17,7 @@ class KukaEnv(gym.Env):
     def __init__(self,
                  should_render=False,
                  position_control=True,
-                 velocity_penalty=5e-4,
+                 velocity_penalty=1e-3,
                  enable_wind=False,
                  enable_blocks=False):
         self.position_control = position_control

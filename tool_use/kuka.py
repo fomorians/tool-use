@@ -1,4 +1,5 @@
 import os
+import time
 import numpy as np
 import pybullet as p
 
@@ -116,3 +117,37 @@ class Kuka:
                 maxVelocity=self.max_velocity,
                 positionGain=position_gain,
                 velocityGain=velocity_gain)
+
+
+def main():
+    p.connect(p.GUI)
+    p.configureDebugVisualizer(p.COV_ENABLE_GUI, False)
+    p.resetDebugVisualizerCamera(
+        cameraDistance=2.0,
+        cameraYaw=-75,
+        cameraPitch=-35,
+        cameraTargetPosition=[0, 0, 0])
+    p.resetSimulation()
+    p.setGravity(0, 0, -10)
+
+    dir_path = os.path.dirname(os.path.realpath(__file__))
+    data_path = os.path.abspath(os.path.join(dir_path, 'data'))
+
+    # load ground plane
+    p.loadURDF(
+        os.path.join(data_path, 'plane.urdf'),
+        basePosition=[0, 0, -0.05],
+        useFixedBase=True)
+
+    # load kuka arm
+    kuka = Kuka()
+
+    while True:
+        kuka.apply_joint_positions(
+            np.random.uniform(-Kuka.joint_limits, Kuka.joint_limits))
+        p.stepSimulation()
+        time.sleep(1 / 240)
+
+
+if __name__ == '__main__':
+    main()

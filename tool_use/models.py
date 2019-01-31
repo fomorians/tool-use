@@ -57,12 +57,12 @@ class ActionEmbedding(tf.keras.Model):
         return embedding
 
 
-class Forward(tf.keras.Model):
+class ForwardModel(tf.keras.Model):
 
     embedding_size = 64
 
     def __init__(self):
-        super(Forward, self).__init__()
+        super(ForwardModel, self).__init__()
 
         kernel_initializer = tf.keras.initializers.VarianceScaling(scale=2.0)
 
@@ -83,12 +83,12 @@ class Forward(tf.keras.Model):
         return embedding
 
 
-class Inverse(tf.keras.Model):
+class InverseModel(tf.keras.Model):
 
     embedding_size = 64
 
     def __init__(self):
-        super(Inverse, self).__init__()
+        super(InverseModel, self).__init__()
 
         kernel_initializer = tf.keras.initializers.VarianceScaling(scale=2.0)
 
@@ -146,12 +146,12 @@ class Policy(tf.keras.Model):
         return dist
 
 
-class Value(tf.keras.Model):
+class ValueModel(tf.keras.Model):
 
     embedding_size = 64
 
     def __init__(self):
-        super(Value, self).__init__()
+        super(ValueModel, self).__init__()
 
         kernel_initializer = tf.keras.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.keras.initializers.VarianceScaling(scale=1.0)
@@ -174,10 +174,10 @@ class Model(tf.keras.Model):
         super(Model, self).__init__()
         self.observation_embedding = ObservationEmbedding()
         self.action_embedding = ActionEmbedding()
-        self.policy = Policy(action_size=action_size, scale=scale)
-        self.value = Value()
-        self.forward_model = Forward()
-        self.inverse_model = Inverse()
+        self.policy_model = Policy(action_size=action_size, scale=scale)
+        self.value_model = ValueModel()
+        self.forward_model = ForwardModel()
+        self.inverse_model = InverseModel()
 
     @tfe.defun
     def forward(self,
@@ -201,11 +201,11 @@ class Model(tf.keras.Model):
             predictions['actions_embedding'] = actions_embedding
 
         if 'values' in include:
-            predictions['values'] = self.value(
+            predictions['values'] = self.value_model(
                 observations_embedding, training=training)
 
         if 'log_probs' in include or 'entropy' in include:
-            dist = self.policy(observations_embedding, training=training)
+            dist = self.policy_model(observations_embedding, training=training)
 
             if 'log_probs' in include:
                 assert actions is not None
@@ -238,5 +238,5 @@ class Model(tf.keras.Model):
     def call(self, observations, training=None):
         observations_embedding = self.observation_embedding(
             observations, training=training)
-        dist = self.policy(observations_embedding, training=training)
+        dist = self.policy_model(observations_embedding, training=training)
         return dist
