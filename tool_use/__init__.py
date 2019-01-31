@@ -15,5 +15,5 @@ gym.envs.register(
     kwargs=dict(
         should_render=True,
         enable_wind=False,
-        enable_blocks=True,
+        enable_blocks=False,
         velocity_penalty=0.0))

@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 import pyoneer.rl as pyrl
 
-from tool_use import models
+from tool_use.models import Model
 from tool_use.params import HyperParams
 from tool_use.rollout import Rollout
 from tool_use.wrappers import RangeNormalize
@@ -40,16 +40,17 @@ def main():
     tf.set_random_seed(args.seed)
 
     # policies
-    policy = models.PolicyValue(
-        action_size=env.action_space.shape[0], scale=params.scale)
+    model = Model(action_size=env.action_space.shape[0], scale=params.scale)
 
+    # prime models
+    # NOTE: TF eager does not initialize weights until they're called
     mock_observations = tf.zeros(
-        shape=(1, 1, observation_size), dtype=np.float32)
-    mock_actions = tf.zeros(shape=(1, 1, action_size), dtype=np.float32)
-    policy.forward(mock_observations, mock_actions, reset_state=True)
+        shape=(1, 1, observation_size), dtype=tf.float32)
+    mock_actions = tf.zeros(shape=(1, 1, action_size), dtype=tf.float32)
+    model.forward(mock_observations, mock_actions, mock_observations)
 
     # checkpoints
-    checkpoint = tf.train.Checkpoint(policy=policy)
+    checkpoint = tf.train.Checkpoint(model=model)
     checkpoint_path = tf.train.latest_checkpoint(args.job_dir)
     assert checkpoint_path is not None
     checkpoint.restore(checkpoint_path)
@@ -58,7 +59,7 @@ def main():
     rollout = Rollout(env, max_episode_steps=env.spec.max_episode_steps)
 
     # strategies
-    inference_strategy = pyrl.strategies.ModeStrategy(policy)
+    inference_strategy = pyrl.strategies.ModeStrategy(model)
 
     # rollouts
     render = (args.render and args.env != 'KukaEnv-v0')

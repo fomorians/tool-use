@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import pybullet as p
-import pybullet_data
 
 from tool_use.bullet import JointInfo, JointState
 
@@ -31,13 +30,15 @@ class Kuka:
     joint_indices = list(range(num_joints))
 
     def __init__(self, enable_joint_sensors=False):
-        data_path = pybullet_data.getDataPath()
+        dir_path = os.path.dirname(os.path.realpath(__file__))
+        data_path = os.path.abspath(os.path.join(dir_path, 'data'))
         kuka_path = os.path.join(data_path, 'kuka_iiwa/model.urdf')
         self.kuka_id = p.loadURDF(
             fileName=kuka_path,
             basePosition=[0, 0, 0],
             baseOrientation=p.getQuaternionFromEuler([0, 0, 0]),
-            useFixedBase=True)
+            useFixedBase=True,
+            flags=p.URDF_USE_MATERIAL_COLORS_FROM_MTL)
 
         if enable_joint_sensors:
             for joint_index in range(self.num_joints):
