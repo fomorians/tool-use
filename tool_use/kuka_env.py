@@ -127,7 +127,7 @@ class KukaEnv(gym.Env):
         # spawn goal block
         goal_pos = self._sample_goal_pos()
         goal_orn = self._sample_orn()
-        self.goal_id = self._spawn_block(goal_pos, goal_orn)
+        self.goal_id = self._spawn_goal(goal_pos, goal_orn)
 
         self.prev_action = np.zeros(
             shape=self.action_space.shape, dtype=self.action_space.dtype)
@@ -250,19 +250,24 @@ class KukaEnv(gym.Env):
             axis=-1)
         return observation
 
-    def _spawn_block(self, pos, orn, global_scaling=1.0, velocity=None):
-        block_path = os.path.join(self.data_path, 'cube.urdf')
+    def _spawn_goal(self, pos, orn):
+        block_path = os.path.join(self.data_path, 'goal.urdf')
+        block_id = p.loadURDF(
+            fileName=block_path, basePosition=pos, baseOrientation=orn)
+        return block_id
+
+    def _spawn_distractor(self, pos, orn, global_scaling, velocity):
+        block_path = os.path.join(self.data_path, 'distractor.urdf')
         block_id = p.loadURDF(
             fileName=block_path,
             basePosition=pos,
             baseOrientation=orn,
-            useFixedBase=(velocity is None),
+            useFixedBase=False,
             globalScaling=global_scaling)
-        if velocity is not None:
-            p.resetBaseVelocity(
-                objectUniqueId=block_id,
-                linearVelocity=velocity,
-                angularVelocity=[0, 0, 0])
+        p.resetBaseVelocity(
+            objectUniqueId=block_id,
+            linearVelocity=velocity,
+            angularVelocity=[0, 0, 0])
         return block_id
 
     def _spawn_random_block(self):
@@ -272,7 +277,8 @@ class KukaEnv(gym.Env):
         block_orn = self._sample_orn()
         block_scale = np.random.uniform(1, 2)
         block_vel = (link_pos - block_pos) * block_scale * 5
-        return self._spawn_block(block_pos, block_orn, block_scale, block_vel)
+        return self._spawn_distractor(block_pos, block_orn, block_scale,
+                                      block_vel)
 
     def _get_reward(self):
         delta_pos = self._get_delta_pos()
