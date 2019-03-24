@@ -5,11 +5,13 @@ name = "pypi"
 
 [packages]
 attrs = "*"
-gym = {extras = ["box2d"], version = "*"}
+gym = {extras = ["box2d"],version = "*"}
 pybullet = "*"
-pyoneer = {editable = true, path = "/Users/fomoro/Documents/pyoneer"}
+pyoneer = {editable = true,path = "/Users/fomoro/Documents/pyoneer"}
 tensorflow-probability = "*"
 tensorflow = "*"
+gym-pycolab = {editable = true,path = "/Users/fomoro/Documents/gym_pycolab"}
+gym-tool-use = {editable = true,path = "/Users/fomoro/Documents/gym_tool_use"}
 
 [dev-packages]
 jupyterlab = "*"
