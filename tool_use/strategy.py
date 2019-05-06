@@ -10,7 +10,8 @@ class RandomStrategy:
         self.action_space = action_space
 
         loc, var = pynr.nn.moments_from_range(
-            minval=action_space.low, maxval=action_space.high)
+            minval=action_space.low, maxval=action_space.high
+        )
         scale = np.sqrt(var)
         self.ou_process = OrnsteinUhlenbeckNoise(loc, scale)
 

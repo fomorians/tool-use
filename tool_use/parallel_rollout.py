@@ -2,32 +2,28 @@ import numpy as np
 import tensorflow as tf
 
 
-# TODO: use concat approach to work with regular rollout / env
 class ParallelRollout:
     def __init__(self, env, max_episode_steps):
         self.env = env
         self.max_episode_steps = max_episode_steps
 
     def __call__(self, policy, episodes):
-        observation_size = self.env.observation_space.shape[0]
-        action_size = self.env.action_space.shape[0]
+        observation_shape = self.env.observation_space.shape
 
         batch_size = len(self.env)
         batches = int(np.ceil(episodes / batch_size))
 
         observations = np.zeros(
-            shape=(episodes, self.max_episode_steps, observation_size),
-            dtype=np.float32)
-        actions = np.zeros(
-            shape=(episodes, self.max_episode_steps, action_size),
-            dtype=np.float32)
+            shape=(episodes, self.max_episode_steps) + observation_shape,
+            dtype=np.float32,
+        )
+        actions = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.int32)
         observations_next = np.zeros(
-            shape=(episodes, self.max_episode_steps, observation_size),
-            dtype=np.float32)
-        rewards = np.zeros(
-            shape=(episodes, self.max_episode_steps), dtype=np.float32)
-        weights = np.zeros(
-            shape=(episodes, self.max_episode_steps), dtype=np.float32)
+            shape=(episodes, self.max_episode_steps) + observation_shape,
+            dtype=np.float32,
+        )
+        rewards = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
+        weights = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
 
         for batch in range(batches):
             batch_start = batch * batch_size
@@ -45,19 +41,17 @@ class ParallelRollout:
             observation = self.env.reset()
 
             for step in range(self.max_episode_steps):
-                observation_tensor = tf.convert_to_tensor(
-                    observation, dtype=tf.float32)
-                action_batch = policy(
-                    observation_tensor[:, None, ...], training=False)
+                observation_tensor = tf.convert_to_tensor(observation, dtype=tf.float32)
+                action_batch = policy(observation_tensor[:, None, ...], training=False)
                 action = action_batch[:, 0].numpy()
 
                 observation_next, reward, done, info = self.env.step(action)
 
-                observations[batch_start:batch_end,
-                             step] = observation[:slice_size]
+                observations[batch_start:batch_end, step] = observation[:slice_size]
                 actions[batch_start:batch_end, step] = action[:slice_size]
-                observations_next[batch_start:batch_end, step] = (
-                    observation_next[:slice_size])
+                observations_next[batch_start:batch_end, step] = observation_next[
+                    :slice_size
+                ]
                 rewards[batch_start:batch_end, step] = reward[:slice_size]
 
                 for i in range(slice_size):
