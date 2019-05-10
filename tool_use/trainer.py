@@ -25,6 +25,7 @@ class Trainer:
             env = ObservationNormalize(env)
             return env
 
+        # TODO: use ray
         self.env = pyrl.envs.BatchEnv(
             constructor=env_constructor, batch_size=os.cpu_count(), blocking=False
         )
@@ -66,13 +67,17 @@ class Trainer:
         self.summary_writer.set_as_default()
 
         # rollouts
+        # TODO: use ray
         self.rollout = ParallelRollout(
             self.env, max_episode_steps=self.params.max_episode_steps
         )
 
-    # @tf.function
+    @tf.function
     def _train(self, transitions):
         observations, actions, rewards, observations_next, weights = transitions
+
+        episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+        tf.print("episodic_rewards/train", episodic_rewards)
 
         self.rewards_moments(rewards, weights=weights, training=True)
 
@@ -90,6 +95,7 @@ class Trainer:
         log_probs_anchor = dist_anchor.log_prob(actions)
         values = self.value_model(observations, training=False)
 
+        # TODO: convert to classes
         advantages = pyrl.targets.generalized_advantages(
             rewards=rewards_norm,
             values=values,
@@ -103,8 +109,6 @@ class Trainer:
             discount_factor=self.params.discount_factor,
             weights=weights,
         )
-
-        episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
 
         # summaries
         tf.summary.scalar(
@@ -134,14 +138,14 @@ class Trainer:
                     weights,
                 )
             )
-            dataset = dataset.batch(self.params.batch_size)
+            dataset = dataset.batch(self.params.batch_size, drop_remainder=True)
             dataset = dataset.repeat(self.params.epochs)
 
         # prefetch to gpu if available
         if tf.test.is_gpu_available():
             dataset = dataset.apply(tf.data.experimental.prefetch_to_device("/gpu:0"))
         else:
-            dataset = dataset.prefetch(self.params.episodes)
+            dataset = dataset.prefetch(self.params.episodes_train)
 
         trainable_variables = (
             self.policy_model.trainable_variables + self.value_model.trainable_variables
@@ -167,6 +171,7 @@ class Trainer:
                 value_loss_fn = tf.losses.MeanSquaredError()
 
                 # losses
+                # TODO: convert to classes
                 policy_loss = pyrl.losses.clipped_policy_gradient_loss(
                     log_probs=log_probs,
                     log_probs_anchor=log_probs_anchor,
@@ -179,6 +184,7 @@ class Trainer:
                     y_true=returns[..., None],
                     sample_weight=weights * self.params.value_coef,
                 )
+                # TODO: convert to classes
                 entropy_loss = -losses_utils.compute_weighted_loss(
                     losses=entropy, sample_weight=weights * self.params.entropy_coef
                 )
@@ -237,19 +243,16 @@ class Trainer:
 
             tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
 
-    # @tf.function
+    @tf.function
     def _eval(self, transitions):
         observations, actions, rewards, observations_next, weights = transitions
 
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+        tf.print("episodic_rewards/eval", episodic_rewards)
 
         tf.summary.scalar(
             "episodic_rewards/eval", episodic_rewards, step=self.optimizer.iterations
         )
-
-        # save checkpoint
-        checkpoint_prefix = os.path.join(self.job_dir, "ckpt")
-        self.checkpoint.save(file_prefix=checkpoint_prefix)
 
     def train(self):
         for it in range(self.params.train_iters):
@@ -259,7 +262,7 @@ class Trainer:
             with Timer() as train_timer:
                 with tf.device("/cpu:0"):
                     transitions = self.rollout(
-                        self.exploration_strategy, episodes=self.params.episodes
+                        self.exploration_strategy, episodes=self.params.episodes_train
                     )
 
                 self._train(transitions)
@@ -268,19 +271,22 @@ class Trainer:
                 "time/train", train_timer.duration, step=self.optimizer.iterations
             )
 
+            # save checkpoint
+            checkpoint_prefix = os.path.join(self.job_dir, "ckpt")
+            self.checkpoint.save(file_prefix=checkpoint_prefix)
+
             # evaluation
-            if it % self.params.eval_interval == self.params.eval_interval - 1:
-                with Timer() as eval_timer:
-                    with tf.device("/cpu:0"):
-                        transitions = self.rollout(
-                            self.inference_strategy, episodes=self.params.episodes
-                        )
+            with Timer() as eval_timer:
+                with tf.device("/cpu:0"):
+                    transitions = self.rollout(
+                        self.inference_strategy, episodes=self.params.episodes_eval
+                    )
 
-                    self._eval(transitions)
+                self._eval(transitions)
 
-                tf.summary.scalar(
-                    "time/eval", eval_timer.duration, step=self.optimizer.iterations
-                )
+            tf.summary.scalar(
+                "time/eval", eval_timer.duration, step=self.optimizer.iterations
+            )
 
             # flush each iteration
             sys.stdout.flush()

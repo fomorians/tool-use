@@ -70,6 +70,7 @@ class PolicyModel(tf.keras.Model):
 
     def call(self, observations, training=None):
         batch_size, steps, height, width, channels = observations.shape
+
         observations = tf.reshape(
             observations, [batch_size * steps, height, width, channels]
         )
@@ -82,8 +83,12 @@ class PolicyModel(tf.keras.Model):
         action_logits = self.dense_action_logits(hidden)
         direction_logits = self.dense_direction_logits(hidden)
 
-        action_logits = tf.reshape(action_logits, [batch_size, steps, -1])
-        direction_logits = tf.reshape(direction_logits, [batch_size, steps, -1])
+        action_logits = tf.reshape(
+            action_logits, [batch_size, steps, self.dense_action_logits.units]
+        )
+        direction_logits = tf.reshape(
+            direction_logits, [batch_size, steps, self.dense_direction_logits.units]
+        )
 
         action_dist = tfp.distributions.Categorical(logits=action_logits)
         direction_dist = tfp.distributions.Categorical(logits=direction_logits)
@@ -129,6 +134,7 @@ class ValueModel(tf.keras.Model):
 
     def call(self, observations, training=None):
         batch_size, steps, height, width, channels = observations.shape
+
         observations = tf.reshape(
             observations, [batch_size * steps, height, width, channels]
         )
@@ -140,6 +146,6 @@ class ValueModel(tf.keras.Model):
 
         values = self.dense_logits(hidden)
 
-        values = tf.reshape(values, [batch_size, steps, -1])
+        values = tf.reshape(values, [batch_size, steps, self.dense_logits.units])
 
         return values[..., 0]
