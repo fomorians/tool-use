@@ -8,21 +8,21 @@ class HyperParams:
     # environment
     env_name = attr.ib(default=None)
     seed = attr.ib(default=42)
-    max_episode_steps = attr.ib(default=100)
+    max_episode_steps = attr.ib(default=50)
 
     # training
-    train_iters = attr.ib(default=30)
-    episodes = attr.ib(default=128)
+    train_iters = attr.ib(default=10)
+    episodes = attr.ib(default=1024)
     epochs = attr.ib(default=10)
-    batch_size = attr.ib(default=32)
+    batch_size = attr.ib(default=128)
     eval_interval = attr.ib(default=10)
     reward_decay = attr.ib(default=0.9)
     center_reward = attr.ib(default=False)
     normalize_advantages = attr.ib(default=True)
 
     # losses
-    value_coef = attr.ib(default=1e-3)
-    entropy_coef = attr.ib(default=0.02)
+    value_coef = attr.ib(default=1.0)
+    entropy_coef = attr.ib(default=0.0)
     l2_coef = attr.ib(default=0.0)
 
     # optimization

@@ -9,12 +9,11 @@ class MultiCategorical:
 
     def log_prob(self, value):
         values = tf.split(value, len(self.distributions), axis=-1)
-        return tf.math.add_n(
-            [
-                dist.log_prob(val[..., 0])
-                for dist, val in zip(self.distributions, values)
-            ]
-        )
+        log_probs = []
+        for dist, val in zip(self.distributions, values):
+            log_prob = dist.log_prob(val[..., 0])
+            log_probs.append(log_prob)
+        return tf.math.add_n(log_probs)
 
     def entropy(self):
         return tf.math.add_n([dist.entropy() for dist in self.distributions])
@@ -33,6 +32,25 @@ class PolicyModel(tf.keras.Model):
         kernel_initializer = tf.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.initializers.VarianceScaling(scale=1.0)
 
+        self.conv2d_hidden1 = tf.keras.layers.Conv2D(
+            filters=32,
+            kernel_size=2,
+            strides=1,
+            padding="valid",
+            activation=pynr.nn.swish,
+            use_bias=True,
+            kernel_initializer=kernel_initializer,
+        )
+        self.conv2d_hidden2 = tf.keras.layers.Conv2D(
+            filters=64,
+            kernel_size=2,
+            strides=1,
+            padding="valid",
+            activation=pynr.nn.swish,
+            use_bias=True,
+            kernel_initializer=kernel_initializer,
+        )
+        self.flatten = tf.keras.layers.Flatten()
         self.dense_hidden = tf.keras.layers.Dense(
             units=128,
             activation=pynr.nn.swish,
@@ -51,13 +69,21 @@ class PolicyModel(tf.keras.Model):
         )
 
     def call(self, observations, training=None):
-        batch_size, steps = observations.shape[:2]
-        observations_flat = tf.reshape(observations, [batch_size, steps, 12 * 12 * 3])
+        batch_size, steps, height, width, channels = observations.shape
+        observations = tf.reshape(
+            observations, [batch_size * steps, height, width, channels]
+        )
 
-        hidden = self.dense_hidden(observations_flat)
+        hidden = self.conv2d_hidden1(observations)
+        hidden = self.conv2d_hidden2(hidden)
+        hidden = self.flatten(hidden)
+        hidden = self.dense_hidden(hidden)
 
         action_logits = self.dense_action_logits(hidden)
         direction_logits = self.dense_direction_logits(hidden)
+
+        action_logits = tf.reshape(action_logits, [batch_size, steps, -1])
+        direction_logits = tf.reshape(direction_logits, [batch_size, steps, -1])
 
         action_dist = tfp.distributions.Categorical(logits=action_logits)
         direction_dist = tfp.distributions.Categorical(logits=direction_logits)
@@ -72,6 +98,25 @@ class ValueModel(tf.keras.Model):
         kernel_initializer = tf.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.initializers.VarianceScaling(scale=1.0)
 
+        self.conv2d_hidden1 = tf.keras.layers.Conv2D(
+            filters=32,
+            kernel_size=2,
+            strides=1,
+            padding="valid",
+            activation=pynr.nn.swish,
+            use_bias=True,
+            kernel_initializer=kernel_initializer,
+        )
+        self.conv2d_hidden2 = tf.keras.layers.Conv2D(
+            filters=64,
+            kernel_size=2,
+            strides=1,
+            padding="valid",
+            activation=pynr.nn.swish,
+            use_bias=True,
+            kernel_initializer=kernel_initializer,
+        )
+        self.flatten = tf.keras.layers.Flatten()
         self.dense_hidden = tf.keras.layers.Dense(
             units=128,
             activation=pynr.nn.swish,
@@ -83,9 +128,18 @@ class ValueModel(tf.keras.Model):
         )
 
     def call(self, observations, training=None):
-        batch_size, steps = observations.shape[:2]
-        observations_flat = tf.reshape(observations, [batch_size, steps, 12 * 12 * 3])
+        batch_size, steps, height, width, channels = observations.shape
+        observations = tf.reshape(
+            observations, [batch_size * steps, height, width, channels]
+        )
 
-        hidden = self.dense_hidden(observations_flat)
+        hidden = self.conv2d_hidden1(observations)
+        hidden = self.conv2d_hidden2(hidden)
+        hidden = self.flatten(hidden)
+        hidden = self.dense_hidden(hidden)
+
         values = self.dense_logits(hidden)
+
+        values = tf.reshape(values, [batch_size, steps, -1])
+
         return values[..., 0]

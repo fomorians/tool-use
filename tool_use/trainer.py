@@ -6,12 +6,10 @@ import tensorflow as tf
 import pyoneer as pynr
 import pyoneer.rl as pyrl
 
-import gym_tool_use
-
 from tool_use.timer import Timer
 from tool_use.models import PolicyModel, ValueModel
-from tool_use.rollout import Rollout
 from tool_use.parallel_rollout import ParallelRollout
+from tool_use.wrappers import ObservationNormalize
 
 from tensorflow.python.keras.utils import losses_utils
 
@@ -23,12 +21,13 @@ class Trainer:
 
         # environment
         def env_constructor():
-            return gym.make(params.env_name)
+            env = gym.make(params.env_name)
+            env = ObservationNormalize(env)
+            return env
 
         self.env = pyrl.envs.BatchEnv(
             constructor=env_constructor, batch_size=os.cpu_count(), blocking=False
         )
-        # self.env = env_constructor()
 
         # seeding
         self.env.seed(self.params.seed)
@@ -71,13 +70,9 @@ class Trainer:
             self.env, max_episode_steps=self.params.max_episode_steps
         )
 
-    def _train(self):
-        # compute data
-        # force rollouts to cpu
-        with tf.device("/cpu:0"):
-            (observations, actions, rewards, observations_next, weights) = self.rollout(
-                self.exploration_strategy, episodes=self.params.episodes
-            )
+    # @tf.function
+    def _train(self, transitions):
+        observations, actions, rewards, observations_next, weights = transitions
 
         self.rewards_moments(rewards, weights=weights, training=True)
 
@@ -110,11 +105,6 @@ class Trainer:
         )
 
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
-        print(
-            self.optimizer.iterations.numpy(),
-            "episodic_rewards/train",
-            episodic_rewards.numpy(),
-        )
 
         # summaries
         tf.summary.scalar(
@@ -125,6 +115,10 @@ class Trainer:
         )
         tf.summary.scalar(
             "rewards/std", self.rewards_moments.std, step=self.optimizer.iterations
+        )
+        tf.summary.histogram("actions", actions[..., 0], step=self.optimizer.iterations)
+        tf.summary.histogram(
+            "directions", actions[..., 1], step=self.optimizer.iterations
         )
 
         with tf.device("/cpu:0"):
@@ -143,13 +137,11 @@ class Trainer:
             dataset = dataset.batch(self.params.batch_size)
             dataset = dataset.repeat(self.params.epochs)
 
-            # prefetch to gpu if available
-            if tf.test.is_gpu_available():
-                dataset = dataset.apply(
-                    tf.data.experimental.prefetch_to_device("/gpu:0")
-                )
-            else:
-                dataset = dataset.prefetch(self.params.episodes)
+        # prefetch to gpu if available
+        if tf.test.is_gpu_available():
+            dataset = dataset.apply(tf.data.experimental.prefetch_to_device("/gpu:0"))
+        else:
+            dataset = dataset.prefetch(self.params.episodes)
 
         trainable_variables = (
             self.policy_model.trainable_variables + self.value_model.trainable_variables
@@ -245,18 +237,11 @@ class Trainer:
 
             tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
 
-    def _eval(self):
-        with tf.device("/cpu:0"):
-            (observations, actions, rewards, observations_next, weights) = self.rollout(
-                self.inference_strategy, episodes=self.params.episodes
-            )
+    # @tf.function
+    def _eval(self, transitions):
+        observations, actions, rewards, observations_next, weights = transitions
 
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
-        print(
-            self.optimizer.iterations.numpy(),
-            "episodic_rewards/eval",
-            episodic_rewards.numpy(),
-        )
 
         tf.summary.scalar(
             "episodic_rewards/eval", episodic_rewards, step=self.optimizer.iterations
@@ -268,9 +253,16 @@ class Trainer:
 
     def train(self):
         for it in range(self.params.train_iters):
+            print("iteration:", it)
+
             # training
             with Timer() as train_timer:
-                self._train()
+                with tf.device("/cpu:0"):
+                    transitions = self.rollout(
+                        self.exploration_strategy, episodes=self.params.episodes
+                    )
+
+                self._train(transitions)
 
             tf.summary.scalar(
                 "time/train", train_timer.duration, step=self.optimizer.iterations
@@ -279,7 +271,12 @@ class Trainer:
             # evaluation
             if it % self.params.eval_interval == self.params.eval_interval - 1:
                 with Timer() as eval_timer:
-                    self._eval()
+                    with tf.device("/cpu:0"):
+                        transitions = self.rollout(
+                            self.inference_strategy, episodes=self.params.episodes
+                        )
+
+                    self._eval(transitions)
 
                 tf.summary.scalar(
                     "time/eval", eval_timer.duration, step=self.optimizer.iterations
