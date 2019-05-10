@@ -8,17 +8,20 @@ class Rollout:
         self.max_episode_steps = max_episode_steps
 
     def __call__(self, policy, episodes, render=False):
-        observation_size = self.env.observation_space.shape[0]
-        action_size = self.env.action_space.shape[0]
+        observation_space = self.env.observation_space
+        action_space = self.env.action_space
 
         observations = np.zeros(
-            shape=(episodes, self.max_episode_steps, observation_size), dtype=np.float32
+            shape=(episodes, self.max_episode_steps) + observation_space.shape,
+            dtype=observation_space.dtype,
         )
         actions = np.zeros(
-            shape=(episodes, self.max_episode_steps, action_size), dtype=np.float32
+            shape=(episodes, self.max_episode_steps) + action_space.shape,
+            dtype=action_space.dtype,
         )
         observations_next = np.zeros(
-            shape=(episodes, self.max_episode_steps, observation_size), dtype=np.float32
+            shape=(episodes, self.max_episode_steps) + observation_space.shape,
+            dtype=action_space.dtype,
         )
         rewards = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
         weights = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
@@ -30,7 +33,9 @@ class Rollout:
                 if render:
                     self.env.render()
 
-                observation_tensor = tf.convert_to_tensor(observation, dtype=tf.float32)
+                observation_tensor = tf.convert_to_tensor(
+                    observation, dtype=observation_space.dtype
+                )
                 action_batch = policy(
                     observation_tensor[None, None, ...], training=False
                 )

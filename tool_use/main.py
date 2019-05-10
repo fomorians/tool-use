@@ -10,6 +10,7 @@ from tool_use.trainer import Trainer
 
 def main():
     parser = argparse.ArgumentParser()
+    parser.add_argument("--env-name", required=True)
     parser.add_argument("--job-dir", required=True)
     parser.add_argument("--seed", default=42, type=int)
     args = parser.parse_args()
@@ -19,7 +20,7 @@ def main():
     os.makedirs(args.job_dir, exist_ok=True)
 
     # params
-    params = HyperParams(seed=args.seed)
+    params = HyperParams(env_name=args.env_name, seed=args.seed)
     params_path = os.path.join(args.job_dir, "params.json")
     params.save(params_path)
     print(params)

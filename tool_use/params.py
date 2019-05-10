@@ -6,6 +6,7 @@ import tensorflow as tf
 @attr.s
 class HyperParams:
     # environment
+    env_name = attr.ib(default=None)
     seed = attr.ib(default=42)
     max_episode_steps = attr.ib(default=100)
 
@@ -26,7 +27,7 @@ class HyperParams:
 
     # optimization
     learning_rate = attr.ib(default=1e-3)
-    grad_clipping = attr.ib(default=1.0)
+    grad_clipping = attr.ib(default=None)
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)

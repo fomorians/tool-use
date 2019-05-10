@@ -11,6 +11,7 @@ gym-pycolab = {editable = true,path = "/Users/fomoro/Documents/gym_pycolab"}
 gym-tool-use = {editable = true,path = "/Users/fomoro/Documents/gym_tool_use"}
 tf-nightly-2-0-preview = "*"
 tfp-nightly = "*"
+ray = "*"
 
 [dev-packages]
 jupyterlab = "*"

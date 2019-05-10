@@ -1,5 +1,6 @@
 import os
 import sys
+import gym
 import tensorflow as tf
 
 import pyoneer as pynr
@@ -9,6 +10,7 @@ import gym_tool_use
 
 from tool_use.timer import Timer
 from tool_use.models import PolicyModel, ValueModel
+from tool_use.rollout import Rollout
 from tool_use.parallel_rollout import ParallelRollout
 
 from tensorflow.python.keras.utils import losses_utils
@@ -21,27 +23,21 @@ class Trainer:
 
         # environment
         def env_constructor():
-            env = gym_tool_use.BridgeBuildingEnv(
-                observation_type="rgb",
-                random_colors=False,
-                randomly_swap_water_and_boxes=False,
-            )
-            return env
+            return gym.make(params.env_name)
 
-        num_envs = os.cpu_count()
         self.env = pyrl.envs.BatchEnv(
-            constructor=env_constructor, batch_size=num_envs, blocking=False
+            constructor=env_constructor, batch_size=os.cpu_count(), blocking=False
         )
+        # self.env = env_constructor()
 
         # seeding
         self.env.seed(self.params.seed)
 
         # optimization
-        self.global_step = tf.Variable(0, dtype=tf.int64)
         self.optimizer = tf.optimizers.Adam(learning_rate=self.params.learning_rate)
 
         # models
-        self.policy_model = PolicyModel(action_size=self.env.action_space.n)
+        self.policy_model = PolicyModel(action_space=self.env.action_space)
         self.value_model = ValueModel()
 
         # strategies
@@ -55,7 +51,6 @@ class Trainer:
 
         # checkpoints
         self.checkpoint = tf.train.Checkpoint(
-            global_step=self.global_step,
             optimizer=self.optimizer,
             policy_model=self.policy_model,
             value_model=self.value_model,
@@ -179,10 +174,6 @@ class Trainer:
 
                 value_loss_fn = tf.losses.MeanSquaredError()
 
-                import ipdb
-
-                ipdb.set_trace()
-
                 # losses
                 policy_loss = pyrl.losses.clipped_policy_gradient_loss(
                     log_probs=log_probs,
@@ -192,8 +183,8 @@ class Trainer:
                     sample_weight=weights,
                 )
                 value_loss = value_loss_fn(
-                    y_pred=values,
-                    y_true=returns,
+                    y_pred=values[..., None],
+                    y_true=returns[..., None],
                     sample_weight=weights * self.params.value_coef,
                 )
                 entropy_loss = -losses_utils.compute_weighted_loss(
@@ -215,6 +206,9 @@ class Trainer:
                 grads_clipped, _ = tf.clip_by_global_norm(
                     grads, self.params.grad_clipping
                 )
+            else:
+                grads_clipped = grads
+
             grads_and_vars = zip(grads_clipped, trainable_variables)
 
             # optimization
@@ -239,11 +233,13 @@ class Trainer:
             )
 
             tf.summary.scalar(
-                "gradient_norm", tf.global_norm(grads), step=self.optimizer.iterations
+                "gradient_norm",
+                tf.linalg.global_norm(grads),
+                step=self.optimizer.iterations,
             )
             tf.summary.scalar(
                 "gradient_norm/clipped",
-                tf.global_norm(grads_clipped),
+                tf.linalg.global_norm(grads_clipped),
                 step=self.optimizer.iterations,
             )
 
@@ -257,7 +253,9 @@ class Trainer:
 
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
         print(
-            self.global_step.numpy(), "episodic_rewards/eval", episodic_rewards.numpy()
+            self.optimizer.iterations.numpy(),
+            "episodic_rewards/eval",
+            episodic_rewards.numpy(),
         )
 
         tf.summary.scalar(

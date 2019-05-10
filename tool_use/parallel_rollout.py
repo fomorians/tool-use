@@ -8,19 +8,23 @@ class ParallelRollout:
         self.max_episode_steps = max_episode_steps
 
     def __call__(self, policy, episodes):
-        observation_shape = self.env.observation_space.shape
+        observation_space = self.env.observation_space
+        action_space = self.env.action_space
 
         batch_size = len(self.env)
         batches = int(np.ceil(episodes / batch_size))
 
         observations = np.zeros(
-            shape=(episodes, self.max_episode_steps) + observation_shape,
-            dtype=np.float32,
+            shape=(episodes, self.max_episode_steps) + observation_space.shape,
+            dtype=observation_space.dtype,
         )
-        actions = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.int32)
+        actions = np.zeros(
+            shape=(episodes, self.max_episode_steps) + action_space.shape,
+            dtype=action_space.dtype,
+        )
         observations_next = np.zeros(
-            shape=(episodes, self.max_episode_steps) + observation_shape,
-            dtype=np.float32,
+            shape=(episodes, self.max_episode_steps) + observation_space.shape,
+            dtype=observation_space.dtype,
         )
         rewards = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
         weights = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
@@ -41,7 +45,9 @@ class ParallelRollout:
             observation = self.env.reset()
 
             for step in range(self.max_episode_steps):
-                observation_tensor = tf.convert_to_tensor(observation, dtype=tf.float32)
+                observation_tensor = tf.convert_to_tensor(
+                    observation, dtype=observation_space.dtype
+                )
                 action_batch = policy(observation_tensor[:, None, ...], training=False)
                 action = action_batch[:, 0].numpy()
 
