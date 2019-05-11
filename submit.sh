@@ -15,8 +15,7 @@ gcloud ai-platform jobs submit training $JOB_NAME \
     --packages $PACKAGES \
     --module-name "tool_use.main" \
     --config "$(pwd)/config.yaml" \
+    --stream-logs \
     -- \
     --env-name $ENV_NAME \
     --seed $SEED
-
-gcloud ai-platform jobs stream-logs $JOB_NAME

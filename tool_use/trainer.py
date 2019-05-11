@@ -95,9 +95,9 @@ class Trainer:
         else:
             rewards_norm = pynr.math.safe_divide(rewards, self.rewards_moments.std)
 
-        dist_anchor = self.policy_model(observations, training=False)
+        dist_anchor = self.policy_model(observations, training=False, reset_state=True)
         log_probs_anchor = dist_anchor.log_prob(actions)
-        values = self.value_model(observations, training=False)
+        values = self.value_model(observations, training=False, reset_state=True)
 
         # TODO: convert to classes
         advantages = pyrl.targets.generalized_advantages(
@@ -167,9 +167,9 @@ class Trainer:
         ) in dataset:
             with tf.GradientTape() as tape:
                 # forward passes
-                dist = self.policy_model(observations, training=True)
+                dist = self.policy_model(observations, training=True, reset_state=True)
                 log_probs = dist.log_prob(actions)
-                values = self.value_model(observations, training=True)
+                values = self.value_model(observations, training=True, reset_state=True)
                 entropy = dist.entropy()
 
                 value_loss_fn = tf.losses.MeanSquaredError()

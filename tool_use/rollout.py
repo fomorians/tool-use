@@ -33,11 +33,15 @@ class Rollout:
                 if render:
                     self.env.render()
 
+                reset_state = step == 0
+
                 observation_tensor = tf.convert_to_tensor(
                     observation, dtype=observation_space.dtype
                 )
                 action_batch = policy(
-                    observation_tensor[None, None, ...], training=False
+                    observation_tensor[None, None, ...],
+                    training=False,
+                    reset_state=reset_state,
                 )
                 action = action_batch[0, 0].numpy()
 

@@ -46,10 +46,16 @@ class ParallelRollout:
             observation = self.env.reset()
 
             for step in range(self.max_episode_steps):
+                reset_state = step == 0
+
                 observation_tensor = tf.convert_to_tensor(
                     observation, dtype=observation_space.dtype
                 )
-                action_batch = policy(observation_tensor[:, None, ...], training=False)
+                action_batch = policy(
+                    observation_tensor[:, None, ...],
+                    training=False,
+                    reset_state=reset_state,
+                )
                 action = action_batch[:, 0].numpy()
 
                 observation_next, reward, done, info = self.env.step(action)
