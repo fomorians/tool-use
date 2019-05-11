@@ -15,7 +15,7 @@ class ObservationNormalization:
         observation_space = self.env.observation_space
         low = -np.ones(shape=observation_space.shape, dtype=observation_space.dtype)
         high = np.ones(shape=observation_space.shape, dtype=observation_space.dtype)
-        return gym.spaces.Box(low, high, dtype=np.float32)
+        return gym.spaces.Box(low, high, dtype=observation_space.dtype.dtype)
 
     def normalize_observation(self, observ):
         low = self.env.observation_space.low
@@ -52,7 +52,7 @@ class ObservationCoordinates:
         low = np.concatenate([observation_space.low, coords_low], axis=-1)
         high = np.concatenate([observation_space.high, coords_high], axis=-1)
 
-        space = gym.spaces.Box(low, high, dtype=np.float32)
+        space = gym.spaces.Box(low, high, dtype=observation_space.dtype)
         return space
 
     def generate_coords(self):
@@ -61,8 +61,8 @@ class ObservationCoordinates:
         xx_range = np.linspace(0.0, 1.0, x_dim)
         yy_range = np.linspace(0.0, 1.0, y_dim)
 
-        xx_ones = np.ones(x_dim, dtype=np.int32)
-        yy_ones = np.ones(y_dim, dtype=np.int32)
+        xx_ones = np.ones(x_dim, dtype=self.observation_space.dtype)
+        yy_ones = np.ones(y_dim, dtype=self.observation_space.dtype)
 
         xx_channel = np.matmul(xx_ones[..., None], xx_range[None, ...])
         yy_channel = np.matmul(yy_range[..., None], yy_ones[None, ...])

@@ -8,6 +8,7 @@ import pyoneer.rl as pyrl
 
 from tool_use.timer import Timer
 from tool_use.models import PolicyModel, ValueModel
+from tool_use.rollout import Rollout
 from tool_use.parallel_rollout import ParallelRollout
 from tool_use.wrappers import ObservationCoordinates, ObservationNormalization
 
@@ -31,8 +32,23 @@ class Trainer:
             constructor=env_constructor, batch_size=os.cpu_count(), blocking=False
         )
 
+        self.env_perceptual = gym.make("PerceptualTrapTube-v0")
+        self.env_perceptual = ObservationCoordinates(self.env_perceptual)
+        self.env_perceptual = ObservationNormalization(self.env_perceptual)
+
+        self.env_structural = gym.make("StructuralTrapTube-v0")
+        self.env_structural = ObservationCoordinates(self.env_structural)
+        self.env_structural = ObservationNormalization(self.env_structural)
+
+        self.env_symbolic = gym.make("SymbolicTrapTube-v0")
+        self.env_symbolic = ObservationCoordinates(self.env_symbolic)
+        self.env_symbolic = ObservationNormalization(self.env_symbolic)
+
         # seeding
         self.env.seed(self.params.seed)
+        self.env_perceptual.seed(self.params.seed)
+        self.env_structural.seed(self.params.seed)
+        self.env_symbolic.seed(self.params.seed)
 
         # optimization
         self.optimizer = tf.optimizers.Adam(learning_rate=self.params.learning_rate)
@@ -71,6 +87,15 @@ class Trainer:
         # TODO: use ray
         self.rollout = ParallelRollout(
             self.env, max_episode_steps=self.params.max_episode_steps
+        )
+        self.rollout_perceptual = Rollout(
+            self.env_perceptual, max_episode_steps=self.params.max_episode_steps
+        )
+        self.rollout_structural = Rollout(
+            self.env_structural, max_episode_steps=self.params.max_episode_steps
+        )
+        self.rollout_symbolic = Rollout(
+            self.env_symbolic, max_episode_steps=self.params.max_episode_steps
         )
 
     @tf.function
@@ -124,10 +149,12 @@ class Trainer:
         tf.summary.scalar(
             "rewards/std", self.rewards_moments.std, step=self.optimizer.iterations
         )
-        tf.summary.histogram("actions", actions[..., 0], step=self.optimizer.iterations)
-        tf.summary.histogram(
-            "directions", actions[..., 1], step=self.optimizer.iterations
-        )
+
+        # TODO: tf-2-alpha fails here
+        # tf.summary.histogram("actions", actions[..., 0], step=self.optimizer.iterations)
+        # tf.summary.histogram(
+        #     "directions", actions[..., 1], step=self.optimizer.iterations
+        # )
 
         with tf.device("/cpu:0"):
             dataset = tf.data.Dataset.from_tensor_slices(
@@ -247,18 +274,20 @@ class Trainer:
 
             tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
 
-    @tf.function
-    def _eval(self, transitions):
-        observations, actions, rewards, observations_next, weights = transitions
-
+    def _eval(self, rollout_fn, name):
+        observations, actions, rewards, observations_next, weights = rollout_fn(
+            self.inference_strategy, episodes=self.params.episodes_eval
+        )
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
-        tf.print("episodic_rewards/eval", episodic_rewards)
+
+        tf.print("episodic_rewards/eval/{}".format(name), episodic_rewards)
         tf.debugging.assert_less_equal(
             episodic_rewards, 1.0, message="episodic rewards must equal <= 1"
         )
-
         tf.summary.scalar(
-            "episodic_rewards/eval", episodic_rewards, step=self.optimizer.iterations
+            "episodic_rewards/eval/{}".format(name),
+            episodic_rewards,
+            step=self.optimizer.iterations,
         )
 
     def train(self):
@@ -285,11 +314,10 @@ class Trainer:
             # evaluation
             with Timer() as eval_timer:
                 with tf.device("/cpu:0"):
-                    transitions = self.rollout(
-                        self.inference_strategy, episodes=self.params.episodes_eval
-                    )
-
-                self._eval(transitions)
+                    self._eval(self.rollout, self.params.env_name)
+                    self._eval(self.rollout_perceptual, "PerceptualTrapTube-v0")
+                    self._eval(self.rollout_structural, "StructuralTrapTube-v0")
+                    self._eval(self.rollout_symbolic, "SymbolicTrapTube-v0")
 
             tf.summary.scalar(
                 "time/eval", eval_timer.duration, step=self.optimizer.iterations

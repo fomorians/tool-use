@@ -7,8 +7,8 @@ REQUIRED_PACKAGES = [
     "pyoneer",
     "gym_pycolab",
     "gym_tool_use",
+    "tensorflow==2.0.0-alpha0",
     "tfp-nightly",
-    "tf-nightly-2-0-preview",
 ]
 
 setup(

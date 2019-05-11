@@ -10,7 +10,7 @@ pyoneer = {editable = true,path = "/Users/fomoro/Documents/pyoneer"}
 gym-pycolab = {editable = true,path = "/Users/fomoro/Documents/gym_pycolab"}
 gym-tool-use = {editable = true,path = "/Users/fomoro/Documents/gym_tool_use"}
 tfp-nightly = "*"
-tf-nightly-2-0-preview = "*"
+tensorflow = "==2.0.0-alpha0"
 
 [dev-packages]
 jupyterlab = "*"

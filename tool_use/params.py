@@ -11,9 +11,9 @@ class HyperParams:
     max_episode_steps = attr.ib(default=50)
 
     # training
-    train_iters = attr.ib(default=10)
+    train_iters = attr.ib(default=20)
     episodes_train = attr.ib(default=1024)
-    episodes_eval = attr.ib(default=128)
+    episodes_eval = attr.ib(default=100)
     epochs = attr.ib(default=10)
     batch_size = attr.ib(default=128)
     reward_decay = attr.ib(default=0.9)
@@ -37,3 +37,12 @@ class HyperParams:
     def save(self, path):
         with tf.io.gfile.GFile(path, mode="w") as fp:
             json.dump(attr.asdict(self), fp)
+
+
+{
+    "train_iters": 100,
+    "seed": 42,
+    "normalize_advantages": true,
+    "epochs": 10,
+    "env_name": "TrapTube-v0",
+}
