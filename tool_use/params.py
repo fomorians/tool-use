@@ -7,8 +7,8 @@ import tensorflow as tf
 class HyperParams:
     # environment
     env_name = attr.ib(default=None)
-    seed = attr.ib(default=42)
-    max_episode_steps = attr.ib(default=50)
+    seed = attr.ib(default=None)
+    max_episode_steps = attr.ib(default=100)
 
     # training
     train_iters = attr.ib(default=20)
@@ -37,12 +37,3 @@ class HyperParams:
     def save(self, path):
         with tf.io.gfile.GFile(path, mode="w") as fp:
             json.dump(attr.asdict(self), fp)
-
-
-{
-    "train_iters": 100,
-    "seed": 42,
-    "normalize_advantages": true,
-    "epochs": 10,
-    "env_name": "TrapTube-v0",
-}
