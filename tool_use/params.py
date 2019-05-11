@@ -13,7 +13,7 @@ class HyperParams:
     # training
     train_iters = attr.ib(default=20)
     episodes_train = attr.ib(default=1024)
-    episodes_eval = attr.ib(default=100)
+    episodes_eval = attr.ib(default=10)
     epochs = attr.ib(default=10)
     batch_size = attr.ib(default=128)
     reward_decay = attr.ib(default=0.9)

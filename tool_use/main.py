@@ -12,7 +12,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--env-name", required=True)
     parser.add_argument("--job-dir", required=True)
-    parser.add_argument("--seed", default=42, type=int)
+    parser.add_argument("--seed", default=0, type=int)
     args = parser.parse_args()
     print(args)
 

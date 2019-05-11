@@ -172,11 +172,13 @@ class Trainer:
             dataset = dataset.batch(self.params.batch_size, drop_remainder=True)
             dataset = dataset.repeat(self.params.epochs)
 
-        # prefetch to gpu if available
-        if tf.test.is_gpu_available():
-            dataset = dataset.apply(tf.data.experimental.prefetch_to_device("/gpu:0"))
-        else:
-            dataset = dataset.prefetch(self.params.episodes_train)
+            # prefetch to gpu if available
+            if tf.test.is_gpu_available():
+                dataset = dataset.apply(
+                    tf.data.experimental.prefetch_to_device("/gpu:0")
+                )
+            else:
+                dataset = dataset.prefetch(self.params.episodes_train)
 
         trainable_variables = (
             self.policy_model.trainable_variables + self.value_model.trainable_variables
