@@ -54,4 +54,7 @@ class Rollout:
 
                 observation = observation_next
 
+        # ensure rewards are masked
+        rewards *= weights
+
         return observations, actions, rewards, observations_next, weights

@@ -3,6 +3,7 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 
+# TODO: move to pyoneer
 class MultiCategorical:
     def __init__(self, distributions):
         self.distributions = distributions
@@ -32,6 +33,10 @@ class PolicyModel(tf.keras.Model):
         kernel_initializer = tf.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.initializers.VarianceScaling(scale=1.0)
 
+        self.initial_hidden_state = tf.Variable(tf.zeros(shape=[64]), trainable=True)
+        self.initial_cell_state = tf.Variable(tf.zeros(shape=[64]), trainable=True)
+
+        # TODO: use RNN
         self.conv2d_hidden1 = tf.keras.layers.Conv2D(
             filters=32,
             kernel_size=2,
@@ -52,10 +57,13 @@ class PolicyModel(tf.keras.Model):
         )
         self.flatten = tf.keras.layers.Flatten()
         self.dense_hidden = tf.keras.layers.Dense(
-            units=128,
+            units=64,
             activation=pynr.nn.swish,
             use_bias=True,
             kernel_initializer=kernel_initializer,
+        )
+        self.rnn = tf.keras.layers.LSTM(
+            units=64, return_sequences=True, return_state=True
         )
         self.dense_action_logits = tf.keras.layers.Dense(
             units=action_space.nvec[0],
@@ -68,7 +76,12 @@ class PolicyModel(tf.keras.Model):
             kernel_initializer=logits_initializer,
         )
 
-    def call(self, observations, training=None):
+    def get_initial_state(self, batch_size):
+        hidden_state = tf.tile(self.initial_hidden_state[None, ...], [batch_size, 1])
+        cell_state = tf.tile(self.initial_cell_state[None, ...], [batch_size, 1])
+        return hidden_state, cell_state
+
+    def call(self, observations, training=None, reset_state=None):
         batch_size, steps, height, width, channels = observations.shape
 
         observations = tf.reshape(
@@ -103,6 +116,10 @@ class ValueModel(tf.keras.Model):
         kernel_initializer = tf.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.initializers.VarianceScaling(scale=1.0)
 
+        self.initial_hidden_state = tf.Variable(tf.zeros(shape=[64]), trainable=True)
+        self.initial_cell_state = tf.Variable(tf.zeros(shape=[64]), trainable=True)
+
+        # TODO: use RNN
         self.conv2d_hidden1 = tf.keras.layers.Conv2D(
             filters=32,
             kernel_size=2,
@@ -123,16 +140,24 @@ class ValueModel(tf.keras.Model):
         )
         self.flatten = tf.keras.layers.Flatten()
         self.dense_hidden = tf.keras.layers.Dense(
-            units=128,
+            units=64,
             activation=pynr.nn.swish,
             use_bias=True,
             kernel_initializer=kernel_initializer,
+        )
+        self.rnn = tf.keras.layers.LSTM(
+            units=64, return_sequences=True, return_state=True
         )
         self.dense_logits = tf.keras.layers.Dense(
             units=1, activation=None, kernel_initializer=logits_initializer
         )
 
-    def call(self, observations, training=None):
+    def get_initial_state(self, batch_size):
+        hidden_state = tf.tile(self.initial_hidden_state[None, ...], [batch_size, 1])
+        cell_state = tf.tile(self.initial_cell_state[None, ...], [batch_size, 1])
+        return hidden_state, cell_state
+
+    def call(self, observations, training=None, reset_state=None):
         batch_size, steps, height, width, channels = observations.shape
 
         observations = tf.reshape(

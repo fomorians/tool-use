@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 
 
+# TODO: use ray with Rollout instead
 class ParallelRollout:
     def __init__(self, env, max_episode_steps):
         self.env = env
@@ -73,5 +74,8 @@ class ParallelRollout:
                     break
 
                 observation = observation_next
+
+        # ensure rewards are masked
+        rewards *= weights
 
         return observations, actions, rewards, observations_next, weights

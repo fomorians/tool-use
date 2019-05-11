@@ -9,7 +9,7 @@ import pyoneer.rl as pyrl
 from tool_use.timer import Timer
 from tool_use.models import PolicyModel, ValueModel
 from tool_use.parallel_rollout import ParallelRollout
-from tool_use.wrappers import ObservationNormalize
+from tool_use.wrappers import ObservationCoordinates, ObservationNormalization
 
 from tensorflow.python.keras.utils import losses_utils
 
@@ -22,7 +22,8 @@ class Trainer:
         # environment
         def env_constructor():
             env = gym.make(params.env_name)
-            env = ObservationNormalize(env)
+            env = ObservationCoordinates(env)
+            env = ObservationNormalization(env)
             return env
 
         # TODO: use ray
@@ -78,6 +79,9 @@ class Trainer:
 
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
         tf.print("episodic_rewards/train", episodic_rewards)
+        tf.debugging.assert_less_equal(
+            episodic_rewards, 1.0, message="episodic rewards must equal <= 1"
+        )
 
         self.rewards_moments(rewards, weights=weights, training=True)
 
@@ -249,6 +253,9 @@ class Trainer:
 
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
         tf.print("episodic_rewards/eval", episodic_rewards)
+        tf.debugging.assert_less_equal(
+            episodic_rewards, 1.0, message="episodic rewards must equal <= 1"
+        )
 
         tf.summary.scalar(
             "episodic_rewards/eval", episodic_rewards, step=self.optimizer.iterations
