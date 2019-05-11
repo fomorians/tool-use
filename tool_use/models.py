@@ -36,7 +36,9 @@ class PolicyModel(tf.keras.Model):
         self.initial_hidden_state = tf.Variable(tf.zeros(shape=[64]), trainable=True)
         self.initial_cell_state = tf.Variable(tf.zeros(shape=[64]), trainable=True)
 
-        # TODO: use RNN
+        self.hidden_state = None
+        self.cell_state = None
+
         self.conv2d_hidden1 = tf.keras.layers.Conv2D(
             filters=32,
             kernel_size=2,
@@ -84,24 +86,32 @@ class PolicyModel(tf.keras.Model):
     def call(self, observations, training=None, reset_state=None):
         batch_size, steps, height, width, channels = observations.shape
 
+        # TODO: implement contextual reshapes
+        # with FlattenDims(axis=[0, 1]):
+        #     pass
+        # with ExpandDims(axis=[0]):
+        #     pass
         observations = tf.reshape(
             observations, [batch_size * steps, height, width, channels]
         )
+
+        # compute an initial state for the RNN
+        if self.hidden_state is None or self.cell_state is None or reset_state:
+            self.hidden_state, self.cell_state = self.get_initial_state(batch_size)
 
         hidden = self.conv2d_hidden1(observations)
         hidden = self.conv2d_hidden2(hidden)
         hidden = self.flatten(hidden)
         hidden = self.dense_hidden(hidden)
 
+        hidden = tf.reshape(hidden, [batch_size, steps, self.rnn.units])
+
+        hidden, self.hidden_state, self.cell_state = self.rnn(
+            hidden, initial_state=[self.hidden_state, self.cell_state]
+        )
+
         action_logits = self.dense_action_logits(hidden)
         direction_logits = self.dense_direction_logits(hidden)
-
-        action_logits = tf.reshape(
-            action_logits, [batch_size, steps, self.dense_action_logits.units]
-        )
-        direction_logits = tf.reshape(
-            direction_logits, [batch_size, steps, self.dense_direction_logits.units]
-        )
 
         action_dist = tfp.distributions.Categorical(logits=action_logits)
         direction_dist = tfp.distributions.Categorical(logits=direction_logits)
@@ -119,7 +129,9 @@ class ValueModel(tf.keras.Model):
         self.initial_hidden_state = tf.Variable(tf.zeros(shape=[64]), trainable=True)
         self.initial_cell_state = tf.Variable(tf.zeros(shape=[64]), trainable=True)
 
-        # TODO: use RNN
+        self.hidden_state = None
+        self.cell_state = None
+
         self.conv2d_hidden1 = tf.keras.layers.Conv2D(
             filters=32,
             kernel_size=2,
@@ -164,13 +176,21 @@ class ValueModel(tf.keras.Model):
             observations, [batch_size * steps, height, width, channels]
         )
 
+        # compute an initial state for the RNN
+        if self.hidden_state is None or self.cell_state is None or reset_state:
+            self.hidden_state, self.cell_state = self.get_initial_state(batch_size)
+
         hidden = self.conv2d_hidden1(observations)
         hidden = self.conv2d_hidden2(hidden)
         hidden = self.flatten(hidden)
         hidden = self.dense_hidden(hidden)
 
-        values = self.dense_logits(hidden)
+        hidden = tf.reshape(hidden, [batch_size, steps, self.rnn.units])
 
-        values = tf.reshape(values, [batch_size, steps, self.dense_logits.units])
+        hidden, self.hidden_state, self.cell_state = self.rnn(
+            hidden, initial_state=[self.hidden_state, self.cell_state]
+        )
+
+        values = self.dense_logits(hidden)
 
         return values[..., 0]
