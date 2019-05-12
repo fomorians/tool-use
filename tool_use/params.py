@@ -12,22 +12,22 @@ class HyperParams:
 
     # training
     train_iters = attr.ib(default=20)
-    episodes_train = attr.ib(default=512)
-    episodes_eval = attr.ib(default=64)
+    episodes_train = attr.ib(default=1024)
+    episodes_eval = attr.ib(default=128)
     epochs = attr.ib(default=10)
-    batch_size = attr.ib(default=64)
+    batch_size = attr.ib(default=128)
     reward_decay = attr.ib(default=0.9)
     center_reward = attr.ib(default=False)
     normalize_advantages = attr.ib(default=True)
 
     # losses
-    value_coef = attr.ib(default=1e-1)
+    value_coef = attr.ib(default=1e-2)
     entropy_coef = attr.ib(default=1e-3)
     l2_coef = attr.ib(default=0.0)
 
     # optimization
     learning_rate = attr.ib(default=1e-3)
-    grad_clipping = attr.ib(default=None)
+    grad_clipping = attr.ib(default=10)
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)

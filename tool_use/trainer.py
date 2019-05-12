@@ -7,7 +7,7 @@ import pyoneer as pynr
 import pyoneer.rl as pyrl
 
 from tool_use.timer import Timer
-from tool_use.models import PolicyModel, ValueModel
+from tool_use.models import Model
 from tool_use.parallel_rollout import ParallelRollout
 from tool_use.wrappers import ObservationCoordinates, ObservationNormalization
 
@@ -22,7 +22,7 @@ class Trainer:
         # environment
         def env_constructor(env_name):
             def _constructor():
-                env = gym.make(params.env_name)
+                env = gym.make(env_name)
                 env = ObservationCoordinates(env)
                 env = ObservationNormalization(env)
                 return env
@@ -61,12 +61,15 @@ class Trainer:
         self.optimizer = tf.optimizers.Adam(learning_rate=self.params.learning_rate)
 
         # models
-        self.policy_model = PolicyModel(action_space=self.env.action_space)
-        self.value_model = ValueModel()
+        self.model = Model(action_space=self.env.action_space)
 
         # strategies
-        self.exploration_strategy = pyrl.strategies.SampleStrategy(self.policy_model)
-        self.inference_strategy = pyrl.strategies.ModeStrategy(self.policy_model)
+        self.exploration_strategy = pyrl.strategies.SampleStrategy(
+            self.model.get_distribution
+        )
+        self.inference_strategy = pyrl.strategies.ModeStrategy(
+            self.model.get_distribution
+        )
 
         # normalization
         self.rewards_moments = pynr.nn.ExponentialMovingMoments(
@@ -76,8 +79,7 @@ class Trainer:
         # checkpoints
         self.checkpoint = tf.train.Checkpoint(
             optimizer=self.optimizer,
-            policy_model=self.policy_model,
-            value_model=self.value_model,
+            model=self.model,
             rewards_moments=self.rewards_moments,
         )
         checkpoint_path = tf.train.latest_checkpoint(self.job_dir)
@@ -127,9 +129,8 @@ class Trainer:
         else:
             rewards_norm = pynr.math.safe_divide(rewards, self.rewards_moments.std)
 
-        dist_anchor = self.policy_model(observations, training=False, reset_state=True)
+        dist_anchor, values = self.model(observations, training=False, reset_state=True)
         log_probs_anchor = dist_anchor.log_prob(actions)
-        values = self.value_model(observations, training=False, reset_state=True)
 
         # TODO: convert to classes
         advantages = pyrl.targets.generalized_advantages(
@@ -187,10 +188,6 @@ class Trainer:
             else:
                 dataset = dataset.prefetch(self.params.episodes_train)
 
-        trainable_variables = (
-            self.policy_model.trainable_variables + self.value_model.trainable_variables
-        )
-
         for (
             observations,
             actions,
@@ -203,9 +200,8 @@ class Trainer:
         ) in dataset:
             with tf.GradientTape() as tape:
                 # forward passes
-                dist = self.policy_model(observations, training=True, reset_state=True)
+                dist, values = self.model(observations, training=True, reset_state=True)
                 log_probs = dist.log_prob(actions)
-                values = self.value_model(observations, training=True, reset_state=True)
                 entropy = dist.entropy()
 
                 value_loss_fn = tf.losses.MeanSquaredError()
@@ -231,7 +227,7 @@ class Trainer:
                 regularization_loss = tf.add_n(
                     [
                         tf.nn.l2_loss(tvar) * self.params.l2_coef
-                        for tvar in trainable_variables
+                        for tvar in self.model.trainable_variables
                     ]
                 )
                 loss = tf.add_n(
@@ -239,7 +235,7 @@ class Trainer:
                 )
 
             # compute gradients
-            grads = tape.gradient(loss, trainable_variables)
+            grads = tape.gradient(loss, self.model.trainable_variables)
             if self.params.grad_clipping is not None:
                 grads_clipped, _ = tf.clip_by_global_norm(
                     grads, self.params.grad_clipping
@@ -247,7 +243,7 @@ class Trainer:
             else:
                 grads_clipped = grads
 
-            grads_and_vars = zip(grads_clipped, trainable_variables)
+            grads_and_vars = zip(grads_clipped, self.model.trainable_variables)
 
             # optimization
             self.optimizer.apply_gradients(grads_and_vars)
@@ -334,4 +330,5 @@ class Trainer:
 
             # flush each iteration
             sys.stdout.flush()
+            sys.stderr.flush()
             self.summary_writer.flush()
