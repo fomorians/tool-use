@@ -1,5 +1,4 @@
 import os
-import gc
 import sys
 import gym
 import tensorflow as tf
@@ -110,6 +109,7 @@ class Trainer:
 
     @tf.function
     def _train(self, transitions):
+        # TODO: add Transitions attr/namedtuple
         observations, actions, rewards, observations_next, weights = transitions
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
 
@@ -333,5 +333,3 @@ class Trainer:
             sys.stdout.flush()
             sys.stderr.flush()
             self.summary_writer.flush()
-
-            gc.collect()

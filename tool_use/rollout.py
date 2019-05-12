@@ -26,12 +26,16 @@ class Rollout:
         rewards = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
         weights = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
 
+        images = []
+
         for episode in range(episodes):
             observation = self.env.reset()
+            episode_images = []
 
             for step in range(self.max_episode_steps):
                 if render:
-                    self.env.render()
+                    image = self.env.render(mode="rgb_array")
+                    episode_images.append(image)
 
                 reset_state = step == 0
 
@@ -54,6 +58,10 @@ class Rollout:
                 weights[episode, step] = 1.0
 
                 if done:
+                    if render:
+                        image = self.env.render(mode="rgb_array")
+                        episode_images.append(image)
+                        images.append(episode_images)
                     break
 
                 observation = observation_next
@@ -61,4 +69,7 @@ class Rollout:
         # ensure rewards are masked
         rewards *= weights
 
-        return observations, actions, rewards, observations_next, weights
+        if render:
+            return observations, actions, rewards, observations_next, weights, images
+        else:
+            return observations, actions, rewards, observations_next, weights

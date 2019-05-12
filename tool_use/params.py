@@ -11,11 +11,11 @@ class HyperParams:
     max_episode_steps = attr.ib(default=100)
 
     # training
-    train_iters = attr.ib(default=20)
-    episodes_train = attr.ib(default=1024)
-    episodes_eval = attr.ib(default=128)
-    epochs = attr.ib(default=10)
-    batch_size = attr.ib(default=128)
+    train_iters = attr.ib(default=1)
+    episodes_train = attr.ib(default=8)
+    episodes_eval = attr.ib(default=8)
+    epochs = attr.ib(default=1)
+    batch_size = attr.ib(default=8)
     reward_decay = attr.ib(default=0.9)
     center_reward = attr.ib(default=False)
     normalize_advantages = attr.ib(default=True)
@@ -27,12 +27,19 @@ class HyperParams:
 
     # optimization
     learning_rate = attr.ib(default=1e-3)
-    grad_clipping = attr.ib(default=10)
+    grad_clipping = attr.ib(default=1)
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)
     discount_factor = attr.ib(default=0.99)
     lambda_factor = attr.ib(default=0.95)
+
+    @staticmethod
+    def load(path):
+        with tf.io.gfile.GFile(path, mode="r") as fp:
+            data = json.load(fp)
+        params = HyperParams(**data)
+        return params
 
     def save(self, path):
         with tf.io.gfile.GFile(path, mode="w") as fp:
