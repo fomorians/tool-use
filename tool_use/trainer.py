@@ -1,4 +1,5 @@
 import os
+import gc
 import sys
 import gym
 import tensorflow as tf
@@ -332,3 +333,5 @@ class Trainer:
             sys.stdout.flush()
             sys.stderr.flush()
             self.summary_writer.flush()
+
+            gc.collect()
