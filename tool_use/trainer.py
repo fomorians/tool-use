@@ -8,7 +8,6 @@ import pyoneer.rl as pyrl
 
 from tool_use.timer import Timer
 from tool_use.models import PolicyModel, ValueModel
-from tool_use.rollout import Rollout
 from tool_use.parallel_rollout import ParallelRollout
 from tool_use.wrappers import ObservationCoordinates, ObservationNormalization
 
@@ -21,28 +20,36 @@ class Trainer:
         self.params = params
 
         # environment
-        def env_constructor():
-            env = gym.make(params.env_name)
-            env = ObservationCoordinates(env)
-            env = ObservationNormalization(env)
-            return env
+        def env_constructor(env_name):
+            def _constructor():
+                env = gym.make(params.env_name)
+                env = ObservationCoordinates(env)
+                env = ObservationNormalization(env)
+                return env
+
+            return _constructor
 
         # TODO: use ray
         self.env = pyrl.envs.BatchEnv(
-            constructor=env_constructor, batch_size=os.cpu_count(), blocking=False
+            constructor=env_constructor(self.params.env_name),
+            batch_size=os.cpu_count(),
+            blocking=False,
         )
-
-        self.env_perceptual = gym.make("PerceptualTrapTube-v0")
-        self.env_perceptual = ObservationCoordinates(self.env_perceptual)
-        self.env_perceptual = ObservationNormalization(self.env_perceptual)
-
-        self.env_structural = gym.make("StructuralTrapTube-v0")
-        self.env_structural = ObservationCoordinates(self.env_structural)
-        self.env_structural = ObservationNormalization(self.env_structural)
-
-        self.env_symbolic = gym.make("SymbolicTrapTube-v0")
-        self.env_symbolic = ObservationCoordinates(self.env_symbolic)
-        self.env_symbolic = ObservationNormalization(self.env_symbolic)
+        self.env_perceptual = pyrl.envs.BatchEnv(
+            constructor=env_constructor("PerceptualTrapTube-v0"),
+            batch_size=os.cpu_count(),
+            blocking=False,
+        )
+        self.env_structural = pyrl.envs.BatchEnv(
+            constructor=env_constructor("StructuralTrapTube-v0"),
+            batch_size=os.cpu_count(),
+            blocking=False,
+        )
+        self.env_symbolic = pyrl.envs.BatchEnv(
+            constructor=env_constructor("SymbolicTrapTube-v0"),
+            batch_size=os.cpu_count(),
+            blocking=False,
+        )
 
         # seeding
         self.env.seed(self.params.seed)
@@ -88,21 +95,21 @@ class Trainer:
         self.rollout = ParallelRollout(
             self.env, max_episode_steps=self.params.max_episode_steps
         )
-        self.rollout_perceptual = Rollout(
+        self.rollout_perceptual = ParallelRollout(
             self.env_perceptual, max_episode_steps=self.params.max_episode_steps
         )
-        self.rollout_structural = Rollout(
+        self.rollout_structural = ParallelRollout(
             self.env_structural, max_episode_steps=self.params.max_episode_steps
         )
-        self.rollout_symbolic = Rollout(
+        self.rollout_symbolic = ParallelRollout(
             self.env_symbolic, max_episode_steps=self.params.max_episode_steps
         )
 
     @tf.function
     def _train(self, transitions):
         observations, actions, rewards, observations_next, weights = transitions
-
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+
         tf.print("episodic_rewards/train", episodic_rewards)
         tf.debugging.assert_less_equal(
             episodic_rewards, 1.0, message="episodic rewards must equal <= 1"
@@ -294,7 +301,7 @@ class Trainer:
 
     def train(self):
         for it in range(self.params.train_iters):
-            print("iteration:", it)
+            tf.print("iteration:", it)
 
             # training
             with Timer() as train_timer:
