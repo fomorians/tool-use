@@ -11,7 +11,7 @@ import pyoneer.rl as pyrl
 
 from tool_use.models import Model
 from tool_use.params import HyperParams
-from tool_use.rollout import Rollout
+from tool_use.rollouts import Rollout
 from tool_use.wrappers import ObservationCoordinates, ObservationNormalization
 
 
@@ -59,15 +59,13 @@ def main():
     rollout = Rollout(env, max_episode_steps=params.max_episode_steps)
 
     # rollout
-    observations, actions, rewards, observations_next, weights, images = rollout(
-        inference_strategy, episodes=args.episodes, render=True
-    )
-    episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+    transitions = rollout(inference_strategy, env, episodes=args.episodes, render=True)
+    episodic_rewards = tf.reduce_mean(tf.reduce_sum(transitions["rewards"], axis=-1))
     tf.print("episodic_rewards", episodic_rewards)
 
     # save
     timestamp = int(time.time())
-    for episode, episode_images in enumerate(images):
+    for episode, episode_images in enumerate(transitions["images"]):
         image_path = os.path.join(
             args.job_dir, "render_{}_{}.gif".format(timestamp, episode)
         )

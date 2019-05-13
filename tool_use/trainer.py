@@ -29,7 +29,7 @@ class Trainer:
 
             return _constructor
 
-        # TODO: use ray
+        # TODO: instantiate processes as needed
         self.env = pyrl.envs.BatchEnv(
             constructor=env_constructor(self.params.env_name),
             batch_size=os.cpu_count(),
@@ -93,7 +93,7 @@ class Trainer:
         self.summary_writer.set_as_default()
 
         # rollouts
-        # TODO: use ray
+        # TODO: instantiate as needed
         self.rollout = ParallelRollout(
             self.env, max_episode_steps=self.params.max_episode_steps
         )
@@ -107,31 +107,137 @@ class Trainer:
             self.env_symbolic, max_episode_steps=self.params.max_episode_steps
         )
 
+    def _batch(self, batch):
+        with tf.GradientTape() as tape:
+            # forward passes
+            dist, values = self.model(
+                batch["observations"],
+                batch["actions_prev"],
+                batch["rewards_prev"],
+                training=True,
+                reset_state=True,
+            )
+            log_probs = dist.log_prob(batch["actions"])
+            entropy = dist.entropy()
+
+            value_loss_fn = tf.losses.MeanSquaredError()
+
+            # losses
+            # TODO: convert to classes
+            policy_loss = pyrl.losses.clipped_policy_gradient_loss(
+                log_probs=log_probs,
+                log_probs_anchor=batch["log_probs_anchor"],
+                advantages=batch["advantages"],
+                epsilon_clipping=self.params.epsilon_clipping,
+                sample_weight=batch["weights"],
+            )
+            value_loss = value_loss_fn(
+                y_pred=values[..., None],
+                y_true=batch["returns"][..., None],
+                sample_weight=batch["weights"] * self.params.value_coef,
+            )
+            # TODO: convert to classes
+            entropy_loss = -losses_utils.compute_weighted_loss(
+                losses=entropy,
+                sample_weight=batch["weights"] * self.params.entropy_coef,
+            )
+            regularization_loss = tf.add_n(
+                [
+                    tf.nn.l2_loss(tvar) * self.params.l2_coef
+                    for tvar in self.model.trainable_variables
+                ]
+            )
+            loss = tf.add_n(
+                [policy_loss, value_loss, entropy_loss, regularization_loss]
+            )
+
+        # compute gradients
+        grads = tape.gradient(loss, self.model.trainable_variables)
+        if self.params.grad_clipping is not None:
+            grads_clipped, _ = tf.clip_by_global_norm(grads, self.params.grad_clipping)
+        else:
+            grads_clipped = grads
+
+        grads_and_vars = zip(grads_clipped, self.model.trainable_variables)
+
+        # optimization
+        self.optimizer.apply_gradients(grads_and_vars)
+
+        # summaries
+        entropy_mean = losses_utils.compute_weighted_loss(
+            losses=entropy, sample_weight=batch["weights"]
+        )
+
+        tf.summary.scalar("loss/policy", policy_loss, step=self.optimizer.iterations)
+        tf.summary.scalar("loss/value", value_loss, step=self.optimizer.iterations)
+        tf.summary.scalar("loss/entropy", entropy_loss, step=self.optimizer.iterations)
+        tf.summary.scalar(
+            "loss/regularization", regularization_loss, step=self.optimizer.iterations
+        )
+
+        tf.summary.scalar(
+            "gradient_norm",
+            tf.linalg.global_norm(grads),
+            step=self.optimizer.iterations,
+        )
+        tf.summary.scalar(
+            "gradient_norm/clipped",
+            tf.linalg.global_norm(grads_clipped),
+            step=self.optimizer.iterations,
+        )
+
+        tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
+
+    def _create_dataset(self, data):
+        with tf.device("/cpu:0"):
+            dataset = tf.data.Dataset.from_tensor_slices(data)
+            dataset = dataset.batch(self.params.batch_size, drop_remainder=True)
+            dataset = dataset.repeat(self.params.epochs)
+
+            # prefetch to gpu if available
+            if tf.test.is_gpu_available():
+                dataset = dataset.apply(
+                    tf.data.experimental.prefetch_to_device("/gpu:0")
+                )
+            else:
+                dataset = dataset.prefetch(self.params.episodes_train)
+        return dataset
+
     @tf.function
     def _train(self, transitions):
-        # TODO: add Transitions attr/namedtuple
-        observations, actions, rewards, observations_next, weights = transitions
-        episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+        episodic_rewards = tf.reduce_mean(
+            tf.reduce_sum(transitions["rewards"], axis=-1)
+        )
 
         tf.print("episodic_rewards/train", episodic_rewards)
         tf.debugging.assert_less_equal(
             episodic_rewards, 1.0, message="episodic rewards must equal <= 1"
         )
 
-        self.rewards_moments(rewards, weights=weights, training=True)
+        self.rewards_moments(
+            transitions["rewards"], weights=transitions["weights"], training=True
+        )
 
         if self.params.center_reward:
             rewards_norm = pynr.math.normalize(
-                rewards,
+                transitions["rewards"],
                 loc=self.rewards_moments.mean,
                 scale=self.rewards_moments.std,
-                weights=weights,
+                weights=transitions["weights"],
             )
         else:
-            rewards_norm = pynr.math.safe_divide(rewards, self.rewards_moments.std)
+            rewards_norm = pynr.math.safe_divide(
+                transitions["rewards"], self.rewards_moments.std
+            )
 
-        dist_anchor, values = self.model(observations, training=False, reset_state=True)
-        log_probs_anchor = dist_anchor.log_prob(actions)
+        dist_anchor, values = self.model(
+            transitions["observations"],
+            transitions["actions_prev"],
+            transitions["rewards_prev"],
+            training=False,
+            reset_state=True,
+        )
+        log_probs_anchor = dist_anchor.log_prob(transitions["actions"])
 
         # TODO: convert to classes
         advantages = pyrl.targets.generalized_advantages(
@@ -139,13 +245,13 @@ class Trainer:
             values=values,
             discount_factor=self.params.discount_factor,
             lambda_factor=self.params.lambda_factor,
-            weights=weights,
+            weights=transitions["weights"],
             normalize=self.params.normalize_advantages,
         )
         returns = pyrl.targets.discounted_rewards(
             rewards=rewards_norm,
             discount_factor=self.params.discount_factor,
-            weights=weights,
+            weights=transitions["weights"],
         )
 
         # summaries
@@ -165,126 +271,30 @@ class Trainer:
         #     "directions", actions[..., 1], step=self.optimizer.iterations
         # )
 
-        with tf.device("/cpu:0"):
-            dataset = tf.data.Dataset.from_tensor_slices(
-                (
-                    observations,
-                    actions,
-                    observations_next,
-                    rewards_norm,
-                    advantages,
-                    returns,
-                    log_probs_anchor,
-                    weights,
-                )
-            )
-            dataset = dataset.batch(self.params.batch_size, drop_remainder=True)
-            dataset = dataset.repeat(self.params.epochs)
+        data = {
+            "observations": transitions["observations"],
+            "actions": transitions["actions"],
+            "actions_prev": transitions["actions_prev"],
+            "observations_next": transitions["observations_next"],
+            "rewards_norm": rewards_norm,
+            "rewards_prev": transitions["rewards_prev"],
+            "advantages": advantages,
+            "returns": returns,
+            "log_probs_anchor": log_probs_anchor,
+            "weights": transitions["weights"],
+        }
+        dataset = self._create_dataset(data)
 
-            # prefetch to gpu if available
-            if tf.test.is_gpu_available():
-                dataset = dataset.apply(
-                    tf.data.experimental.prefetch_to_device("/gpu:0")
-                )
-            else:
-                dataset = dataset.prefetch(self.params.episodes_train)
-
-        for (
-            observations,
-            actions,
-            observations_next,
-            rewards_norm,
-            advantages,
-            returns,
-            log_probs_anchor,
-            weights,
-        ) in dataset:
-            with tf.GradientTape() as tape:
-                # forward passes
-                dist, values = self.model(observations, training=True, reset_state=True)
-                log_probs = dist.log_prob(actions)
-                entropy = dist.entropy()
-
-                value_loss_fn = tf.losses.MeanSquaredError()
-
-                # losses
-                # TODO: convert to classes
-                policy_loss = pyrl.losses.clipped_policy_gradient_loss(
-                    log_probs=log_probs,
-                    log_probs_anchor=log_probs_anchor,
-                    advantages=advantages,
-                    epsilon_clipping=self.params.epsilon_clipping,
-                    sample_weight=weights,
-                )
-                value_loss = value_loss_fn(
-                    y_pred=values[..., None],
-                    y_true=returns[..., None],
-                    sample_weight=weights * self.params.value_coef,
-                )
-                # TODO: convert to classes
-                entropy_loss = -losses_utils.compute_weighted_loss(
-                    losses=entropy, sample_weight=weights * self.params.entropy_coef
-                )
-                regularization_loss = tf.add_n(
-                    [
-                        tf.nn.l2_loss(tvar) * self.params.l2_coef
-                        for tvar in self.model.trainable_variables
-                    ]
-                )
-                loss = tf.add_n(
-                    [policy_loss, value_loss, entropy_loss, regularization_loss]
-                )
-
-            # compute gradients
-            grads = tape.gradient(loss, self.model.trainable_variables)
-            if self.params.grad_clipping is not None:
-                grads_clipped, _ = tf.clip_by_global_norm(
-                    grads, self.params.grad_clipping
-                )
-            else:
-                grads_clipped = grads
-
-            grads_and_vars = zip(grads_clipped, self.model.trainable_variables)
-
-            # optimization
-            self.optimizer.apply_gradients(grads_and_vars)
-
-            # summaries
-            entropy_mean = losses_utils.compute_weighted_loss(
-                losses=entropy, sample_weight=weights
-            )
-
-            tf.summary.scalar(
-                "loss/policy", policy_loss, step=self.optimizer.iterations
-            )
-            tf.summary.scalar("loss/value", value_loss, step=self.optimizer.iterations)
-            tf.summary.scalar(
-                "loss/entropy", entropy_loss, step=self.optimizer.iterations
-            )
-            tf.summary.scalar(
-                "loss/regularization",
-                regularization_loss,
-                step=self.optimizer.iterations,
-            )
-
-            tf.summary.scalar(
-                "gradient_norm",
-                tf.linalg.global_norm(grads),
-                step=self.optimizer.iterations,
-            )
-            tf.summary.scalar(
-                "gradient_norm/clipped",
-                tf.linalg.global_norm(grads_clipped),
-                step=self.optimizer.iterations,
-            )
-
-            tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
+        for batch in dataset:
+            self._batch(batch)
 
     def _eval(self, rollout_fn, name):
-        observations, actions, rewards, observations_next, weights = rollout_fn(
+        transitions = rollout_fn(
             self.inference_strategy, episodes=self.params.episodes_eval
         )
-        episodic_rewards = tf.reduce_mean(tf.reduce_sum(rewards, axis=-1))
+        episodic_rewards = tf.reduce_mean(
+            tf.reduce_sum(transitions["rewards"], axis=-1)
+        )
 
         tf.print("episodic_rewards/eval/{}".format(name), episodic_rewards)
         tf.debugging.assert_less_equal(
