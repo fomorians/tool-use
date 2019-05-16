@@ -16,8 +16,6 @@ class Model(tf.keras.Model):
         self.hidden_state = None
         self.cell_state = None
 
-        self.flatten_time = pynr.layers.Flatten(axis=[0, 1])
-
         self.conv2d_hidden1 = tf.keras.layers.Conv2D(
             filters=32,
             kernel_size=2,
@@ -38,8 +36,8 @@ class Model(tf.keras.Model):
         )
         self.flatten = tf.keras.layers.Flatten()
 
-        self.one_hot_actions = pynr.layers.OneHotEncoder(delta=action_space.nvec[0])
-        self.one_hot_directions = pynr.layers.OneHotEncoder(delta=action_space.nvec[1])
+        self.one_hot_actions = pynr.layers.OneHotEncoder(depth=action_space.nvec[0])
+        self.one_hot_directions = pynr.layers.OneHotEncoder(depth=action_space.nvec[1])
         self.concat = tf.keras.layers.Concatenate()
 
         self.dense_hidden = tf.keras.layers.Dense(
@@ -70,26 +68,27 @@ class Model(tf.keras.Model):
     def get_embedding(
         self, observations, actions_prev, rewards_prev, training=None, reset_state=None
     ):
-        observations = self.flatten_time(observations)
+        batch_size, steps, height, width, channels = observations.shape
+
+        observations = tf.reshape(observations, [batch_size * steps, height, width, channels])
+        actions_prev = tf.reshape(actions_prev, [batch_size * steps, actions_prev.shape[-1]])
+        rewards_prev = tf.reshape(rewards_prev, [batch_size * steps, 1])
 
         hidden = self.conv2d_hidden1(observations)
         hidden = self.conv2d_hidden2(hidden)
         hidden = self.flatten(hidden)
 
-        actions_prev = self.flatten_time(actions_prev)
-        rewards_prev = self.flatten_time(rewards_prev)
         actions_hot_prev = self.one_hot_actions(actions_prev[..., 0])
         directions_hot_prev = self.one_hot_directions(actions_prev[..., 1])
+
         hidden = self.concat(
             [hidden, actions_hot_prev, directions_hot_prev, rewards_prev]
         )
 
         hidden = self.dense_hidden(hidden)
-
-        hidden = self.flatten_time.reverse(hidden)
+        hidden = tf.reshape(hidden, [batch_size, steps, self.dense_hidden.units])
 
         if self.hidden_state is None or self.cell_state is None or reset_state:
-            batch_size = observations.shape[0]
             self.hidden_state = tf.tile(self.initial_hidden_state, [batch_size, 1])
             self.cell_state = tf.tile(self.initial_cell_state, [batch_size, 1])
 

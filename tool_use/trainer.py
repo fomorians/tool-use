@@ -6,10 +6,8 @@ import tensorflow as tf
 import pyoneer as pynr
 import pyoneer.rl as pyrl
 
-from tool_use.timer import Timer
 from tool_use.models import Model
 from tool_use.parallel_rollout import ParallelRollout
-from tool_use.wrappers import ObservationCoordinates, ObservationNormalization
 
 from tensorflow.python.keras.utils import losses_utils
 
@@ -23,8 +21,8 @@ class Trainer:
         def env_constructor(env_name):
             def _constructor():
                 env = gym.make(env_name)
-                env = ObservationCoordinates(env)
-                env = ObservationNormalization(env)
+                env = pyrl.wrappers.ObservationCoordinates(env)
+                env = pyrl.wrappers.ObservationNormalization(env)
                 return env
 
             return _constructor
@@ -64,10 +62,10 @@ class Trainer:
         self.model = Model(action_space=self.env.action_space)
 
         # strategies
-        self.exploration_strategy = pyrl.strategies.SampleStrategy(
+        self.exploration_strategy = pyrl.strategies.Sample(
             self.model.get_distribution
         )
-        self.inference_strategy = pyrl.strategies.ModeStrategy(
+        self.inference_strategy = pyrl.strategies.Mode(
             self.model.get_distribution
         )
 
@@ -107,6 +105,20 @@ class Trainer:
             self.env_symbolic, max_episode_steps=self.params.max_episode_steps
         )
 
+        self.value_loss_fn = tf.losses.MeanSquaredError()
+        self.policy_loss_fn = pyrl.losses.ClippedPolicyGradient(
+            epsilon_clipping=self.params.epsilon_clipping
+        )
+        self.entropy_loss_fn = pyrl.losses.PolicyEntropy()
+        self.advantages_fn = pyrl.targets.GeneralizedAdvantages(
+            discount_factor=self.params.discount_factor,
+            lambda_factor=self.params.lambda_factor,
+            normalize=self.params.normalize_advantages,
+        )
+        self.returns_fn = pyrl.targets.DiscountedRewards(
+            discount_factor=self.params.discount_factor
+        )
+
     def _batch(self, batch):
         with tf.GradientTape() as tape:
             # forward passes
@@ -120,25 +132,20 @@ class Trainer:
             log_probs = dist.log_prob(batch["actions"])
             entropy = dist.entropy()
 
-            value_loss_fn = tf.losses.MeanSquaredError()
-
             # losses
-            # TODO: convert to classes
-            policy_loss = pyrl.losses.clipped_policy_gradient_loss(
+            policy_loss = self.policy_loss_fn(
                 log_probs=log_probs,
                 log_probs_anchor=batch["log_probs_anchor"],
                 advantages=batch["advantages"],
-                epsilon_clipping=self.params.epsilon_clipping,
                 sample_weight=batch["weights"],
             )
-            value_loss = value_loss_fn(
+            value_loss = self.value_loss_fn(
                 y_pred=values[..., None],
                 y_true=batch["returns"][..., None],
                 sample_weight=batch["weights"] * self.params.value_coef,
             )
-            # TODO: convert to classes
-            entropy_loss = -losses_utils.compute_weighted_loss(
-                losses=entropy,
+            entropy_loss = self.entropy_loss_fn(
+                entropy=entropy,
                 sample_weight=batch["weights"] * self.params.entropy_coef,
             )
             regularization_loss = tf.add_n(
@@ -203,7 +210,7 @@ class Trainer:
                 dataset = dataset.prefetch(self.params.episodes_train)
         return dataset
 
-    @tf.function
+    # @tf.function
     def _train(self, transitions):
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
@@ -215,7 +222,7 @@ class Trainer:
         )
 
         self.rewards_moments(
-            transitions["rewards"], weights=transitions["weights"], training=True
+            transitions["rewards"], sample_weight=transitions["weights"], training=True
         )
 
         if self.params.center_reward:
@@ -223,7 +230,7 @@ class Trainer:
                 transitions["rewards"],
                 loc=self.rewards_moments.mean,
                 scale=self.rewards_moments.std,
-                weights=transitions["weights"],
+                sample_weight=transitions["weights"],
             )
         else:
             rewards_norm = pynr.math.safe_divide(
@@ -239,20 +246,10 @@ class Trainer:
         )
         log_probs_anchor = dist_anchor.log_prob(transitions["actions"])
 
-        # TODO: convert to classes
-        advantages = pyrl.targets.generalized_advantages(
-            rewards=rewards_norm,
-            values=values,
-            discount_factor=self.params.discount_factor,
-            lambda_factor=self.params.lambda_factor,
-            weights=transitions["weights"],
-            normalize=self.params.normalize_advantages,
+        advantages = self.advantages_fn(
+            rewards=rewards_norm, values=values, sample_weight=transitions["weights"]
         )
-        returns = pyrl.targets.discounted_rewards(
-            rewards=rewards_norm,
-            discount_factor=self.params.discount_factor,
-            weights=transitions["weights"],
-        )
+        returns = self.returns_fn(rewards=rewards_norm, sample_weight=transitions["weights"])
 
         # summaries
         tf.summary.scalar(
@@ -264,12 +261,12 @@ class Trainer:
         tf.summary.scalar(
             "rewards/std", self.rewards_moments.std, step=self.optimizer.iterations
         )
-
-        # TODO: tf-2-alpha fails here
-        # tf.summary.histogram("actions", actions[..., 0], step=self.optimizer.iterations)
-        # tf.summary.histogram(
-        #     "directions", actions[..., 1], step=self.optimizer.iterations
-        # )
+        tf.summary.histogram(
+            "actions", transitions["actions"][..., 0], step=self.optimizer.iterations
+        )
+        tf.summary.histogram(
+            "directions", transitions["actions"][..., 1], step=self.optimizer.iterations
+        )
 
         data = {
             "observations": transitions["observations"],
@@ -311,7 +308,7 @@ class Trainer:
             tf.print("iteration:", it)
 
             # training
-            with Timer() as train_timer:
+            with pynr.debugging.Stopwatch() as train_stopwatch:
                 with tf.device("/cpu:0"):
                     transitions = self.rollout(
                         self.exploration_strategy, episodes=self.params.episodes_train
@@ -320,7 +317,7 @@ class Trainer:
                 self._train(transitions)
 
             tf.summary.scalar(
-                "time/train", train_timer.duration, step=self.optimizer.iterations
+                "time/train", train_stopwatch.duration, step=self.optimizer.iterations
             )
 
             # save checkpoint
@@ -328,7 +325,7 @@ class Trainer:
             self.checkpoint.save(file_prefix=checkpoint_prefix)
 
             # evaluation
-            with Timer() as eval_timer:
+            with pynr.debugging.Stopwatch() as eval_stopwatch:
                 with tf.device("/cpu:0"):
                     self._eval(self.rollout, self.params.env_name)
                     self._eval(self.rollout_perceptual, "PerceptualTrapTube-v0")
@@ -336,7 +333,7 @@ class Trainer:
                     self._eval(self.rollout_symbolic, "SymbolicTrapTube-v0")
 
             tf.summary.scalar(
-                "time/eval", eval_timer.duration, step=self.optimizer.iterations
+                "time/eval", eval_stopwatch.duration, step=self.optimizer.iterations
             )
 
             # flush each iteration
