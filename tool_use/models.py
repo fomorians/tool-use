@@ -97,7 +97,30 @@ class Model(tf.keras.Model):
         )
         return hidden
 
-    def get_distribution(
+    def get_training_output(self, observations, actions_prev, rewards_prev, actions, training=None, reset_state=None):
+        hidden = self.get_embedding(
+            observations,
+            actions_prev,
+            rewards_prev,
+            training=training,
+            reset_state=reset_state,
+        )
+
+        action_logits = self.dense_action_logits(hidden)
+        direction_logits = self.dense_direction_logits(hidden)
+        values_logits = self.dense_values_logits(hidden)
+
+        action_dist = tfp.distributions.Categorical(logits=action_logits)
+        direction_dist = tfp.distributions.Categorical(logits=direction_logits)
+        dist = pynr.distributions.MultiCategorical([action_dist, direction_dist])
+
+        log_probs = dist.log_prob(actions)
+        entropy = dist.entropy()
+        values = values_logits[..., 0]
+
+        return log_probs, entropy, values
+
+    def call(
         self, observations, actions_prev, rewards_prev, training=None, reset_state=None
     ):
         hidden = self.get_embedding(
@@ -116,24 +139,3 @@ class Model(tf.keras.Model):
         dist = pynr.distributions.MultiCategorical([action_dist, direction_dist])
 
         return dist
-
-    def call(
-        self, observations, actions_prev, rewards_prev, training=None, reset_state=None
-    ):
-        hidden = self.get_embedding(
-            observations,
-            actions_prev,
-            rewards_prev,
-            training=training,
-            reset_state=reset_state,
-        )
-
-        action_logits = self.dense_action_logits(hidden)
-        direction_logits = self.dense_direction_logits(hidden)
-        values_logits = self.dense_values_logits(hidden)
-
-        action_dist = tfp.distributions.Categorical(logits=action_logits)
-        direction_dist = tfp.distributions.Categorical(logits=direction_logits)
-        dist = pynr.distributions.MultiCategorical([action_dist, direction_dist])
-
-        return dist, values_logits[..., 0]
