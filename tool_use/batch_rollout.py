@@ -1,7 +1,7 @@
 import numpy as np
 
 
-class ParallelRollout:
+class BatchRollout:
     def __init__(self, env, max_episode_steps):
         self.env = env
         self.max_episode_steps = max_episode_steps

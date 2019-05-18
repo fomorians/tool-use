@@ -7,7 +7,7 @@ import pyoneer.rl as pyrl
 from tool_use.env import create_env
 from tool_use.data import create_dataset
 from tool_use.model import Model
-from tool_use.distribute import parallel_rollout
+from tool_use.batch_rollout import BatchRollout
 
 from tensorflow.python.keras.utils import losses_utils
 
@@ -17,14 +17,12 @@ class Trainer:
         self.job_dir = job_dir
         self.params = params
 
-        # environment
-        self.env = create_env(self.params.env_name, self.params.seed)
-
         # optimization
         self.optimizer = tf.optimizers.Adam(learning_rate=self.params.learning_rate)
 
         # models
-        self.model = Model(action_space=self.env.action_space)
+        env = create_env(self.params.env_name, self.params.seed)
+        self.model = Model(action_space=env.action_space)
 
         # policies
         self.exploration_policy = pyrl.strategies.Sample(self.model)
@@ -225,14 +223,13 @@ class Trainer:
             self._batch_train(batch)
 
     def _eval(self, env_name):
-        transitions = parallel_rollout(
-            model=self.model,
-            env_name=env_name,
-            max_episode_steps=self.params.max_episode_steps,
-            episodes=self.params.episodes_eval,
-            seed=self.params.seed,
-            training=False,
+        # environment
+        env = pyrl.wrappers.Batch(
+            lambda: create_env(env_name, self.params.seed),
+            batch_size=self.params.env_batch_size,
         )
+        rollout = BatchRollout(env, self.params.max_episode_steps)
+        transitions = rollout(self.inference_policy, self.params.episodes_eval)
 
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
@@ -254,16 +251,16 @@ class Trainer:
 
             # training
             with pynr.debugging.Stopwatch() as train_stopwatch:
-                transitions = parallel_rollout(
-                    model=self.model,
-                    env_name=self.params.env_name,
-                    max_episode_steps=self.params.max_episode_steps,
-                    episodes=self.params.episodes_train,
-                    seed=self.params.seed + it,
-                    training=True,
+                # environment
+                env = pyrl.wrappers.Batch(
+                    lambda: create_env(self.params.env_name, self.params.seed + it),
+                    batch_size=self.params.env_batch_size,
                 )
+                rollout = BatchRollout(env, self.params.max_episode_steps)
+                transitions = rollout(self.inference_policy, self.params.episodes_eval)
                 self._train(transitions)
 
+            tf.print("time/train", train_stopwatch.duration)
             tf.summary.scalar(
                 "time/train", train_stopwatch.duration, step=self.optimizer.iterations
             )

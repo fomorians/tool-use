@@ -7,6 +7,7 @@ import tensorflow as tf
 class HyperParams:
     # environment
     env_name = attr.ib(default=None)
+    env_batch_size = attr.ib(default=64)
     seed = attr.ib(default=None)
     max_episode_steps = attr.ib(default=100)
 

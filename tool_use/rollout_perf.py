@@ -1,10 +1,11 @@
+import ray
 import pyoneer as pynr
 import pyoneer.rl as pyrl
 
 from tool_use.env import create_env
 from tool_use.model import Model
 from tool_use.rollout import Rollout
-from tool_use.parallel_rollout import ParallelRollout
+from tool_use.batch_rollout import BatchRollout
 
 
 def main():
@@ -12,18 +13,18 @@ def main():
     seed = 0
     max_episode_steps = 100
     episodes = 1024
-    batch_size = 4
+    batch_size = 64
 
-    # async vectorized rollout
-    with pynr.debugging.Stopwatch() as stopwatch:
-        env = pyrl.wrappers.BatchProcess(
-            lambda: create_env(env_name, seed), batch_size=batch_size
-        )
-        model = Model(action_space=env.action_space)
-        policy = pyrl.strategies.Sample(model)
-        rollout = ParallelRollout(env, max_episode_steps)
-        rollout(policy, episodes)
-    print("vec:", stopwatch.duration)
+    # # async vectorized rollout
+    # with pynr.debugging.Stopwatch() as stopwatch:
+    #     env = pyrl.wrappers.BatchProcess(
+    #         lambda: create_env(env_name, seed), batch_size=batch_size
+    #     )
+    #     model = Model(action_space=env.action_space)
+    #     policy = pyrl.strategies.Sample(model)
+    #     rollout = BatchRollout(env, max_episode_steps)
+    #     rollout(policy, episodes)
+    # print("batch process:", stopwatch.duration)
 
     # vectorized rollout
     with pynr.debugging.Stopwatch() as stopwatch:
@@ -32,25 +33,23 @@ def main():
         )
         model = Model(action_space=env.action_space)
         policy = pyrl.strategies.Sample(model)
-        rollout = ParallelRollout(env, max_episode_steps)
+        rollout = BatchRollout(env, max_episode_steps)
         rollout(policy, episodes)
-    print("vec:", stopwatch.duration)
+    print("batch:", stopwatch.duration)
 
-    # naive rollout
-    with pynr.debugging.Stopwatch() as stopwatch:
-        env = create_env(env_name, seed)
-        model = Model(action_space=env.action_space)
-        policy = pyrl.strategies.Sample(model)
-        rollout = Rollout(env, max_episode_steps)
-        rollout(policy, episodes)
-    print("rollout:", stopwatch.duration)
+    # # naive rollout
+    # with pynr.debugging.Stopwatch() as stopwatch:
+    #     env = create_env(env_name, seed)
+    #     model = Model(action_space=env.action_space)
+    #     policy = pyrl.strategies.Sample(model)
+    #     rollout = Rollout(env, max_episode_steps)
+    #     rollout(policy, episodes)
+    # print("rollout:", stopwatch.duration)
 
     # ray rollout
+    # ray.init()
     # with pynr.debugging.Stopwatch() as stopwatch:
-    #     ray.get([rollout.remote() for i in range(4)])
-    #     parallel_rollout(
-    #         model, env_name, max_episode_steps, episodes, seed, training=None
-    #     )
+    #     ray.get([ray_rollout.remote() for i in range(batch_size)])
     # print("ray:", stopwatch.duration)
 
 
