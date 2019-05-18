@@ -3,8 +3,10 @@ from setuptools import setup
 
 REQUIRED_PACKAGES = [
     "gym",
+    "ray[debug,rllib]",
     "attrs",
     "pyoneer",
+    "pycolab",
     "gym_pycolab",
     "gym_tool_use",
     "tf-nightly-2.0-preview",

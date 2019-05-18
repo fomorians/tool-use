@@ -6,7 +6,7 @@ class Rollout:
         self.env = env
         self.max_episode_steps = max_episode_steps
 
-    def __call__(self, policy, episodes, render=False, render_mode="rgb_array"):
+    def __call__(self, policy, episodes, render=False):
         observation_space = self.env.observation_space
         action_space = self.env.action_space
 
@@ -24,7 +24,7 @@ class Rollout:
         )
         observations_next = np.zeros(
             shape=(episodes, self.max_episode_steps) + observation_space.shape,
-            dtype=action_space.dtype,
+            dtype=observation_space.dtype,
         )
         rewards = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
         rewards_prev = np.zeros(
@@ -32,25 +32,25 @@ class Rollout:
         )
         weights = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
 
-        images = None
-        if render and render_mode == "rgb_array":
-            images = []
+        if render:
+            height, width, _ = observation_space.shape
+            image_height, image_width = (
+                height * self.env.resize_scale,
+                width * self.env.resize_scale,
+            )
+            images = np.zeros(
+                shape=(episodes, self.max_episode_steps, image_height, image_width, 3),
+                dtype=np.uint8,
+            )
 
         for episode in range(episodes):
             observation = self.env.reset()
             action_prev = np.zeros(shape=action_space.shape, dtype=action_space.dtype)
             reward_prev = np.zeros(shape=(), dtype=np.float32)
 
-            if render and render_mode == "rgb_array":
-                episode_images = []
-
             for step in range(self.max_episode_steps):
                 if render:
-                    if render_mode == "rgb_array":
-                        image = self.env.render(mode=render_mode)
-                        episode_images.append(image)
-                    else:
-                        self.env.render()
+                    images[episode, step] = self.env.render(mode="rgb_array")
 
                 reset_state = step == 0
 
@@ -77,19 +77,14 @@ class Rollout:
 
                 if done:
                     if render:
-                        if render_mode == "rgb_array":
-                            image = self.env.render(mode=render_mode)
-                            episode_images.append(image)
-                            images.append(episode_images)
-                        else:
-                            self.env.render()
+                        images[episode, step] = self.env.render(mode="rgb_array")
                     break
 
                 observation = observation_next
                 action_prev = action
-                reward_prev = reward.astype(np.float32)
+                reward_prev = np.asarray(reward, dtype=np.float32)
 
-        return {
+        transitions = {
             "observations": observations,
             "actions": actions,
             "actions_prev": actions_prev,
@@ -97,5 +92,7 @@ class Rollout:
             "rewards": rewards,
             "rewards_prev": rewards_prev,
             "weights": weights,
-            "images": images,
         }
+        if render:
+            transitions["images"] = images
+        return transitions

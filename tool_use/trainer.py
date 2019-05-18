@@ -1,33 +1,15 @@
-import os
 import sys
-import gym
 import tensorflow as tf
 
 import pyoneer as pynr
 import pyoneer.rl as pyrl
 
-from tool_use.models import Model
+from tool_use.env import create_env
+from tool_use.data import create_dataset
+from tool_use.model import Model
+from tool_use.distribute import parallel_rollout
 
 from tensorflow.python.keras.utils import losses_utils
-
-
-def create_dataset(data, batch_size, epochs):
-    with tf.device("/cpu:0"):
-        dataset = tf.data.Dataset.from_tensor_slices(data)
-        dataset = dataset.batch(batch_size, drop_remainder=True)
-        dataset = dataset.repeat(epochs)
-        dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
-    return dataset
-
-
-def env_constructor(env_name, seed):
-    def _constructor():
-        env = gym.make(env_name)
-        env = pyrl.wrappers.ObservationCoordinates(env)
-        env = pyrl.wrappers.ObservationNormalization(env)
-        env.seed(seed)
-        return env
-    return _constructor
 
 
 class Trainer:
@@ -35,15 +17,18 @@ class Trainer:
         self.job_dir = job_dir
         self.params = params
 
+        # environment
+        self.env = create_env(self.params.env_name, self.params.seed)
+
         # optimization
         self.optimizer = tf.optimizers.Adam(learning_rate=self.params.learning_rate)
 
         # models
         self.model = Model(action_space=self.env.action_space)
 
-        # strategies
-        self.exploration_strategy = pyrl.strategies.Sample(self.model)
-        self.inference_strategy = pyrl.strategies.Mode(self.model)
+        # policies
+        self.exploration_policy = pyrl.strategies.Sample(self.model)
+        self.inference_policy = pyrl.strategies.Mode(self.model)
 
         # normalization
         self.rewards_moments = pynr.nn.ExponentialMovingMoments(
@@ -56,9 +41,12 @@ class Trainer:
             model=self.model,
             rewards_moments=self.rewards_moments,
         )
-        checkpoint_path = tf.train.latest_checkpoint(self.job_dir)
-        if checkpoint_path is not None:
-            self.checkpoint.restore(checkpoint_path)
+        self.checkpoint_manager = tf.train.CheckpointManager(
+            self.checkpoint, directory=self.job_dir, max_to_keep=None
+        )
+        if self.checkpoint_manager.latest_checkpoint:
+            status = self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
+            status.assert_consumed()
 
         # summaries
         self.summary_writer = tf.summary.create_file_writer(
@@ -143,12 +131,20 @@ class Trainer:
         tf.summary.scalar("loss/policy", policy_loss, step=self.optimizer.iterations)
         tf.summary.scalar("loss/value", value_loss, step=self.optimizer.iterations)
         tf.summary.scalar("loss/entropy", entropy_loss, step=self.optimizer.iterations)
-        tf.summary.scalar("loss/regularization", regularization_loss, step=self.optimizer.iterations)
-        tf.summary.scalar("gradient_norm", gradient_norm, step=self.optimizer.iterations)
-        tf.summary.scalar("gradient_norm/clipped", clipped_gradient_norm, step=self.optimizer.iterations)
+        tf.summary.scalar(
+            "loss/regularization", regularization_loss, step=self.optimizer.iterations
+        )
+        tf.summary.scalar(
+            "gradient_norm", gradient_norm, step=self.optimizer.iterations
+        )
+        tf.summary.scalar(
+            "gradient_norm/clipped",
+            clipped_gradient_norm,
+            step=self.optimizer.iterations,
+        )
         tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
 
-    # @tf.function
+    @tf.function
     def _train(self, transitions):
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
@@ -188,7 +184,9 @@ class Trainer:
         advantages = self.advantages_fn(
             rewards=rewards_norm, values=values, sample_weight=transitions["weights"]
         )
-        returns = self.returns_fn(rewards=rewards_norm, sample_weight=transitions["weights"])
+        returns = self.returns_fn(
+            rewards=rewards_norm, sample_weight=transitions["weights"]
+        )
 
         # summaries
         tf.summary.scalar(
@@ -227,8 +225,14 @@ class Trainer:
             self._batch_train(batch)
 
     def _eval(self, env_name):
-        with tf.device("/cpu:0"):
-            transitions = self.pool(env_constructor(env_name), self.inference_strategy, episodes=self.params.episodes_eval)
+        transitions = parallel_rollout(
+            model=self.model,
+            env_name=env_name,
+            max_episode_steps=self.params.max_episode_steps,
+            episodes=self.params.episodes_eval,
+            seed=self.params.seed,
+            training=False,
+        )
 
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
@@ -250,8 +254,14 @@ class Trainer:
 
             # training
             with pynr.debugging.Stopwatch() as train_stopwatch:
-                with tf.device("/cpu:0"):
-                    transitions = self.pool(env_constructor(self.params.env_name), self.exploration_strategy, episodes=self.params.episodes_train)
+                transitions = parallel_rollout(
+                    model=self.model,
+                    env_name=self.params.env_name,
+                    max_episode_steps=self.params.max_episode_steps,
+                    episodes=self.params.episodes_train,
+                    seed=self.params.seed + it,
+                    training=True,
+                )
                 self._train(transitions)
 
             tf.summary.scalar(
@@ -259,8 +269,7 @@ class Trainer:
             )
 
             # save checkpoint
-            checkpoint_prefix = os.path.join(self.job_dir, "ckpt")
-            self.checkpoint.save(file_prefix=checkpoint_prefix)
+            self.checkpoint_manager.save()
 
             # evaluation
             with pynr.debugging.Stopwatch() as eval_stopwatch:

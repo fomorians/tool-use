@@ -65,13 +65,17 @@ class Model(tf.keras.Model):
             units=1, activation=None, kernel_initializer=logits_initializer
         )
 
-    def get_embedding(
+    def _get_embedding(
         self, observations, actions_prev, rewards_prev, training=None, reset_state=None
     ):
         batch_size, steps, height, width, channels = observations.shape
 
-        observations = tf.reshape(observations, [batch_size * steps, height, width, channels])
-        actions_prev = tf.reshape(actions_prev, [batch_size * steps, actions_prev.shape[-1]])
+        observations = tf.reshape(
+            observations, [batch_size * steps, height, width, channels]
+        )
+        actions_prev = tf.reshape(
+            actions_prev, [batch_size * steps, actions_prev.shape[-1]]
+        )
         rewards_prev = tf.reshape(rewards_prev, [batch_size * steps, 1])
 
         hidden = self.conv2d_hidden1(observations)
@@ -97,8 +101,17 @@ class Model(tf.keras.Model):
         )
         return hidden
 
-    def get_training_output(self, observations, actions_prev, rewards_prev, actions, training=None, reset_state=None):
-        hidden = self.get_embedding(
+    @tf.function
+    def get_training_output(
+        self,
+        observations,
+        actions_prev,
+        rewards_prev,
+        actions,
+        training=None,
+        reset_state=None,
+    ):
+        hidden = self._get_embedding(
             observations,
             actions_prev,
             rewards_prev,
@@ -123,7 +136,7 @@ class Model(tf.keras.Model):
     def call(
         self, observations, actions_prev, rewards_prev, training=None, reset_state=None
     ):
-        hidden = self.get_embedding(
+        hidden = self._get_embedding(
             observations,
             actions_prev,
             rewards_prev,
