@@ -64,7 +64,15 @@ def main():
         image_path = os.path.join(
             args.job_dir, "render_{}_{}.gif".format(timestamp, episode)
         )
-        imageio.mimwrite(image_path, episode_images, loop=1, fps=5, subrectangles=True)
+        episode_weights = transitions["weights"][episode]
+        max_episode_steps = int(episode_weights.sum())
+        imageio.mimwrite(
+            image_path,
+            episode_images[: max_episode_steps + 1],
+            loop=1,
+            fps=1,
+            subrectangles=True,
+        )
 
 
 if __name__ == "__main__":
