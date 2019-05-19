@@ -9,7 +9,7 @@ import tensorflow as tf
 import pyoneer.rl as pyrl
 
 from tool_use.env import create_env
-from tool_use.models import Model
+from tool_use.model import Model
 from tool_use.params import HyperParams
 from tool_use.rollout import Rollout
 
@@ -41,21 +41,20 @@ def main():
     model = Model(action_space=env.action_space)
 
     # strategies
-    inference_strategy = pyrl.strategies.ModeStrategy(model.get_distribution)
+    inference_strategy = pyrl.strategies.Mode(model)
 
     # checkpoints
     checkpoint = tf.train.Checkpoint(model=model)
     checkpoint_manager = tf.train.CheckpointManager(
         checkpoint, directory=args.job_dir, max_to_keep=None
     )
-    status = checkpoint.restore(checkpoint_manager.latest_checkpoint)
-    status.assert_existing_objects_matched()
+    checkpoint.restore(checkpoint_manager.latest_checkpoint).expect_partial()
 
     # rollouts
     rollout = Rollout(env, max_episode_steps=params.max_episode_steps)
 
     # rollout
-    transitions = rollout(inference_strategy, env, episodes=args.episodes, render=True)
+    transitions = rollout(inference_strategy, episodes=args.episodes, render=True)
     episodic_rewards = np.mean(np.sum(transitions["rewards"], axis=-1))
     print("episodic_rewards", episodic_rewards)
 
