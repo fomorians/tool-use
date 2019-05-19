@@ -56,9 +56,9 @@ class Rollout:
 
                 observation = observation.astype(observation_space.dtype)
                 action_batch = policy(
-                    observation=observation[None, None, ...],
-                    action_prev=action_prev[None, None, ...],
-                    reward_prev=[None, None, ...],
+                    observation[None, None, ...],
+                    action_prev[None, None, ...],
+                    reward_prev[None, None, ...],
                     training=False,
                     reset_state=reset_state,
                 )

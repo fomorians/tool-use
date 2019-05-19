@@ -41,7 +41,7 @@ def main():
     model = Model(action_space=env.action_space)
 
     # strategies
-    inference_strategy = pyrl.strategies.Mode(model)
+    policy = pyrl.strategies.Mode(model)
 
     # checkpoints
     checkpoint = tf.train.Checkpoint(model=model)
@@ -54,7 +54,7 @@ def main():
     rollout = Rollout(env, max_episode_steps=params.max_episode_steps)
 
     # rollout
-    transitions = rollout(inference_strategy, episodes=args.episodes, render=True)
+    transitions = rollout(policy, episodes=args.episodes, render=True)
     episodic_rewards = np.mean(np.sum(transitions["rewards"], axis=-1))
     print("episodic_rewards", episodic_rewards)
 

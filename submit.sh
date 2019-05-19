@@ -17,7 +17,7 @@ gcloud ai-platform jobs submit training $JOB_NAME \
     --package-path "$(pwd)/tool_use" \
     --job-dir $JOB_DIR \
     --packages $PACKAGES \
-    --module-name "tool_use.rollout_perf" \
+    --module-name "tool_use.main" \
     --config "$(pwd)/config.yaml" \
     --stream-logs \
     -- \

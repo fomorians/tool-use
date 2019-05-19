@@ -232,7 +232,10 @@ class Trainer:
 
     def _eval(self, env_name):
         transitions = self._collect_transitions(
-            env_name, self.params.episodes_eval, self.inference_policy, self.params.seed
+            env_name=env_name,
+            episodes=self.params.episodes_eval,
+            policy=self.inference_policy,
+            seed=self.params.seed,
         )
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
@@ -255,10 +258,10 @@ class Trainer:
             # training
             with pynr.debugging.Stopwatch() as train_stopwatch:
                 transitions = self._collect_transitions(
-                    self.params.env_name,
-                    self.params.episodes_train,
-                    self.exploration_policy,
-                    self.params.seed + it,
+                    env_name=self.params.env_name,
+                    episodes=self.params.episodes_train,
+                    policy=self.exploration_policy,
+                    seed=self.params.seed + it,
                 )
                 self._train(transitions)
 

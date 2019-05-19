@@ -11,7 +11,7 @@ def main():
     seed = 0
     max_episode_steps = 100
     episodes = 1024
-    batch_size = 64
+    batch_size = 128
 
     # # async vectorized rollout
     # with pynr.debugging.Stopwatch() as stopwatch:
