@@ -16,7 +16,7 @@ class Model(tf.keras.Model):
         self.hidden_state = None
         self.cell_state = None
 
-        self.conv2d_hidden1 = tf.keras.layers.Conv2D(
+        self.conv1 = tf.keras.layers.Conv2D(
             filters=32,
             kernel_size=2,
             strides=1,
@@ -25,7 +25,7 @@ class Model(tf.keras.Model):
             use_bias=True,
             kernel_initializer=kernel_initializer,
         )
-        self.conv2d_hidden2 = tf.keras.layers.Conv2D(
+        self.conv2 = tf.keras.layers.Conv2D(
             filters=64,
             kernel_size=2,
             strides=1,
@@ -34,6 +34,7 @@ class Model(tf.keras.Model):
             use_bias=True,
             kernel_initializer=kernel_initializer,
         )
+        self.pool1 = tf.keras.layers.GlobalMaxPool2D()
         self.flatten = tf.keras.layers.Flatten()
 
         self.one_hot_actions = pynr.layers.OneHotEncoder(depth=action_space.nvec[0])
@@ -78,8 +79,9 @@ class Model(tf.keras.Model):
         )
         rewards_prev = tf.reshape(rewards_prev, [batch_size * steps, 1])
 
-        hidden = self.conv2d_hidden1(observations)
-        hidden = self.conv2d_hidden2(hidden)
+        hidden = self.conv1(observations)
+        hidden = self.conv2(hidden)
+        hidden = self.pool1(hidden)
         hidden = self.flatten(hidden)
 
         actions_hot_prev = self.one_hot_actions(actions_prev[..., 0])
@@ -101,7 +103,6 @@ class Model(tf.keras.Model):
         )
         return hidden
 
-    @tf.function
     def get_training_output(
         self,
         observations,
@@ -137,9 +138,9 @@ class Model(tf.keras.Model):
         self, observations, actions_prev, rewards_prev, training=None, reset_state=None
     ):
         hidden = self._get_embedding(
-            observations,
-            actions_prev,
-            rewards_prev,
+            observations=observations,
+            actions_prev=actions_prev,
+            rewards_prev=rewards_prev,
             training=training,
             reset_state=reset_state,
         )

@@ -5,13 +5,14 @@ name = "pypi"
 
 [packages]
 attrs = "*"
-gym = {extras = ["box2d"],version = "*"}
+gym = "*"
 pyoneer = {editable = true,path = "/Users/fomoro/Documents/pyoneer"}
+pycolab = {editable = true,path = "/Users/fomoro/Documents/pycolab"}
 gym-pycolab = {editable = true,path = "/Users/fomoro/Documents/gym_pycolab"}
 gym-tool-use = {editable = true,path = "/Users/fomoro/Documents/gym_tool_use"}
-tf-nightly-2-0-preview = "*"
 tfp-nightly = "*"
 ray = {extras = ["debug", "rllib"],version = "*"}
+tf-nightly-2-0-preview = "*"
 
 [dev-packages]
 jupyterlab = "*"

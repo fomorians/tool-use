@@ -69,14 +69,24 @@ class Trainer:
             discount_factor=self.params.discount_factor
         )
 
+    def _collect_transitions(self, env_name, episodes, policy, seed):
+        with tf.device("/cpu:0"):
+            env = pyrl.wrappers.Batch(
+                lambda: create_env(env_name, seed),
+                batch_size=self.params.env_batch_size,
+            )
+            rollout = BatchRollout(env, self.params.max_episode_steps)
+            transitions = rollout(policy, episodes)
+        return transitions
+
     def _batch_train(self, batch):
         with tf.GradientTape() as tape:
             # forward passes
             log_probs, entropy, values = self.model.get_training_output(
-                batch["observations"],
-                batch["actions_prev"],
-                batch["rewards_prev"],
-                batch["actions"],
+                observations=batch["observations"],
+                actions_prev=batch["actions_prev"],
+                rewards_prev=batch["rewards_prev"],
+                actions=batch["actions"],
                 training=True,
                 reset_state=True,
             )
@@ -113,7 +123,6 @@ class Trainer:
             grads_clipped, _ = tf.clip_by_global_norm(grads, self.params.grad_clipping)
         else:
             grads_clipped = grads
-
         grads_and_vars = zip(grads_clipped, self.model.trainable_variables)
 
         # optimization
@@ -142,21 +151,24 @@ class Trainer:
         )
         tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
 
-    @tf.function
     def _train(self, transitions):
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
         )
-
         tf.print("episodic_rewards/train", episodic_rewards)
         tf.debugging.assert_less_equal(
             episodic_rewards, 1.0, message="episodic rewards must equal <= 1"
         )
+        tf.summary.scalar(
+            "episodic_rewards/train", episodic_rewards, step=self.optimizer.iterations
+        )
 
+        # update reward moments
         self.rewards_moments(
             transitions["rewards"], sample_weight=transitions["weights"], training=True
         )
 
+        # normalize rewards
         if self.params.center_reward:
             rewards_norm = pynr.math.normalize(
                 transitions["rewards"],
@@ -169,27 +181,27 @@ class Trainer:
                 transitions["rewards"], self.rewards_moments.std
             )
 
-        dist_anchor, values = self.model.get_training_output(
-            transitions["observations"],
-            transitions["actions_prev"],
-            transitions["rewards_prev"],
-            transitions["actions"],
+        # compute anchor values
+        log_probs_anchor, _, values_anchor = self.model.get_training_output(
+            observations=transitions["observations"],
+            actions_prev=transitions["actions_prev"],
+            rewards_prev=transitions["rewards_prev"],
+            actions=transitions["actions"],
             training=False,
             reset_state=True,
         )
-        log_probs_anchor = dist_anchor.log_prob(transitions["actions"])
 
+        # targets
         advantages = self.advantages_fn(
-            rewards=rewards_norm, values=values, sample_weight=transitions["weights"]
+            rewards=rewards_norm,
+            values=values_anchor,
+            sample_weight=transitions["weights"],
         )
         returns = self.returns_fn(
             rewards=rewards_norm, sample_weight=transitions["weights"]
         )
 
         # summaries
-        tf.summary.scalar(
-            "episodic_rewards/train", episodic_rewards, step=self.optimizer.iterations
-        )
         tf.summary.scalar(
             "rewards/mean", self.rewards_moments.mean, step=self.optimizer.iterations
         )
@@ -203,34 +215,25 @@ class Trainer:
             "directions", transitions["actions"][..., 1], step=self.optimizer.iterations
         )
 
-        # dataset creation
-        data = {
-            "observations": transitions["observations"],
-            "actions": transitions["actions"],
-            "actions_prev": transitions["actions_prev"],
-            "observations_next": transitions["observations_next"],
-            "rewards_norm": rewards_norm,
-            "rewards_prev": transitions["rewards_prev"],
-            "advantages": advantages,
-            "returns": returns,
-            "log_probs_anchor": log_probs_anchor,
-            "weights": transitions["weights"],
-        }
-        dataset = create_dataset(data)
+        data = dict(transitions)
+        data["rewards_norm"] = rewards_norm
+        data["log_probs_anchor"] = log_probs_anchor
+        data["advantages"] = advantages
+        data["returns"] = returns
 
-        # training loop
+        # dataset
+        dataset = create_dataset(
+            data, batch_size=self.params.batch_size, epochs=self.params.epochs
+        )
+
+        # training
         for batch in dataset:
             self._batch_train(batch)
 
     def _eval(self, env_name):
-        # environment
-        env = pyrl.wrappers.Batch(
-            lambda: create_env(env_name, self.params.seed),
-            batch_size=self.params.env_batch_size,
+        transitions = self._collect_transitions(
+            env_name, self.params.episodes_eval, self.inference_policy, self.params.seed
         )
-        rollout = BatchRollout(env, self.params.max_episode_steps)
-        transitions = rollout(self.inference_policy, self.params.episodes_eval)
-
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
         )
@@ -251,13 +254,12 @@ class Trainer:
 
             # training
             with pynr.debugging.Stopwatch() as train_stopwatch:
-                # environment
-                env = pyrl.wrappers.Batch(
-                    lambda: create_env(self.params.env_name, self.params.seed + it),
-                    batch_size=self.params.env_batch_size,
+                transitions = self._collect_transitions(
+                    self.params.env_name,
+                    self.params.episodes_train,
+                    self.exploration_policy,
+                    self.params.seed + it,
                 )
-                rollout = BatchRollout(env, self.params.max_episode_steps)
-                transitions = rollout(self.inference_policy, self.params.episodes_eval)
                 self._train(transitions)
 
             tf.print("time/train", train_stopwatch.duration)
@@ -276,6 +278,7 @@ class Trainer:
                     self._eval("StructuralTrapTube-v0")
                     self._eval("SymbolicTrapTube-v0")
 
+            tf.print("time/eval", eval_stopwatch.duration)
             tf.summary.scalar(
                 "time/eval", eval_stopwatch.duration, step=self.optimizer.iterations
             )
