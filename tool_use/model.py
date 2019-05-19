@@ -3,6 +3,40 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 
 
+class ResidualBlock(tf.keras.layers.Layer):
+    def __init__(self, filters, **kwargs):
+        super(ResidualBlock, self).__init__(**kwargs)
+
+        kernel_initializer = tf.initializers.VarianceScaling(scale=2.0)
+
+        self.conv1 = tf.keras.layers.Conv2D(
+            filters=filters,
+            kernel_size=3,
+            strides=1,
+            padding="same",
+            activation=None,
+            use_bias=True,
+            kernel_initializer=kernel_initializer,
+        )
+        self.conv2 = tf.keras.layers.Conv2D(
+            filters=filters,
+            kernel_size=3,
+            strides=1,
+            padding="same",
+            activation=None,
+            use_bias=True,
+            kernel_initializer=kernel_initializer,
+        )
+
+    def call(self, inputs):
+        hidden = pynr.nn.swish(inputs)
+        hidden = self.conv1(hidden)
+        hidden = pynr.nn.swish(hidden)
+        hidden = self.conv2(hidden)
+        hidden += inputs
+        return hidden
+
+
 class Model(tf.keras.Model):
     def __init__(self, action_space):
         super(Model, self).__init__()
@@ -20,7 +54,7 @@ class Model(tf.keras.Model):
             filters=32,
             kernel_size=2,
             strides=1,
-            padding="valid",
+            padding="same",
             activation=pynr.nn.swish,
             use_bias=True,
             kernel_initializer=kernel_initializer,
@@ -29,16 +63,29 @@ class Model(tf.keras.Model):
             filters=64,
             kernel_size=2,
             strides=1,
-            padding="valid",
+            padding="same",
             activation=pynr.nn.swish,
             use_bias=True,
             kernel_initializer=kernel_initializer,
         )
-        self.pool1 = tf.keras.layers.GlobalMaxPool2D()
-        self.flatten = tf.keras.layers.Flatten()
+        self.downsample1 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
+        self.block1 = ResidualBlock(filters=64)
+        self.downsample2 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
+        self.block2 = ResidualBlock(filters=64)
+        self.global_pool = tf.keras.layers.GlobalMaxPool2D()
 
-        self.one_hot_actions = pynr.layers.OneHotEncoder(depth=action_space.nvec[0])
-        self.one_hot_directions = pynr.layers.OneHotEncoder(depth=action_space.nvec[1])
+        self.actions_prev_embedding = tf.keras.layers.Embedding(
+            input_dim=action_space.nvec[0], output_dim=16
+        )
+        self.directions_prev_embedding = tf.keras.layers.Embedding(
+            input_dim=action_space.nvec[0], output_dim=16
+        )
+        self.rewards_prev_embedding = tf.keras.layers.Dense(
+            units=16,
+            activation=pynr.nn.swish,
+            use_bias=True,
+            kernel_initializer=kernel_initializer,
+        )
         self.concat = tf.keras.layers.Concatenate()
 
         self.dense_hidden = tf.keras.layers.Dense(
@@ -81,17 +128,27 @@ class Model(tf.keras.Model):
 
         hidden = self.conv1(observations)
         hidden = self.conv2(hidden)
-        hidden = self.pool1(hidden)
-        hidden = self.flatten(hidden)
+        hidden = self.downsample1(hidden)
+        hidden = self.block1(hidden)
+        hidden = self.downsample2(hidden)
+        hidden = self.block2(hidden)
+        hidden = self.global_pool(hidden)
 
-        actions_hot_prev = self.one_hot_actions(actions_prev[..., 0])
-        directions_hot_prev = self.one_hot_directions(actions_prev[..., 1])
+        actions_prev_embedding = self.actions_prev_embedding(actions_prev[..., 0])
+        directions_prev_embedding = self.directions_prev_embedding(actions_prev[..., 1])
+        rewards_prev_embedding = self.rewards_prev_embedding(rewards_prev)
 
         hidden = self.concat(
-            [hidden, actions_hot_prev, directions_hot_prev, rewards_prev]
+            [
+                hidden,
+                actions_prev_embedding,
+                directions_prev_embedding,
+                rewards_prev_embedding,
+            ]
         )
 
         hidden = self.dense_hidden(hidden)
+
         hidden = tf.reshape(hidden, [batch_size, steps, self.dense_hidden.units])
 
         if self.hidden_state is None or self.cell_state is None or reset_state:
@@ -113,9 +170,9 @@ class Model(tf.keras.Model):
         reset_state=None,
     ):
         hidden = self._get_embedding(
-            observations,
-            actions_prev,
-            rewards_prev,
+            observations=observations,
+            actions_prev=actions_prev,
+            rewards_prev=rewards_prev,
             training=training,
             reset_state=reset_state,
         )

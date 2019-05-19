@@ -7,7 +7,7 @@ import tensorflow as tf
 class HyperParams:
     # environment
     env_name = attr.ib(default=None)
-    env_batch_size = attr.ib(default=128)
+    env_batch_size = attr.ib(default=64)
     seed = attr.ib(default=None)
     max_episode_steps = attr.ib(default=50)
 
@@ -16,7 +16,7 @@ class HyperParams:
     episodes_train = attr.ib(default=1024)
     episodes_eval = attr.ib(default=128)
     epochs = attr.ib(default=10)
-    batch_size = attr.ib(default=128)
+    batch_size = attr.ib(default=64)
     reward_decay = attr.ib(default=0.9)
     center_reward = attr.ib(default=False)
     normalize_advantages = attr.ib(default=True)
@@ -28,7 +28,7 @@ class HyperParams:
 
     # optimization
     learning_rate = attr.ib(default=1e-3)
-    grad_clipping = attr.ib(default=1)
+    grad_clipping = attr.ib(default=1.0)
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)
