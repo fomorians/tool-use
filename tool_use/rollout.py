@@ -14,6 +14,10 @@ class Rollout:
             shape=(episodes, self.max_episode_steps) + observation_space.shape,
             dtype=observation_space.dtype,
         )
+        observations_next = np.zeros(
+            shape=(episodes, self.max_episode_steps) + observation_space.shape,
+            dtype=observation_space.dtype,
+        )
         actions = np.zeros(
             shape=(episodes, self.max_episode_steps) + action_space.shape,
             dtype=action_space.dtype,
@@ -21,10 +25,6 @@ class Rollout:
         actions_prev = np.zeros(
             shape=(episodes, self.max_episode_steps) + action_space.shape,
             dtype=action_space.dtype,
-        )
-        observations_next = np.zeros(
-            shape=(episodes, self.max_episode_steps) + observation_space.shape,
-            dtype=observation_space.dtype,
         )
         rewards = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
         rewards_prev = np.zeros(

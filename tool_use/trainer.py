@@ -22,14 +22,16 @@ class Trainer:
 
         # models
         env = create_env(self.params.env_name, self.params.seed)
-        self.model = Model(action_space=env.action_space)
+        self.model = Model(
+            observation_space=env.observation_space, action_space=env.action_space
+        )
 
         # policies
         self.exploration_policy = pyrl.strategies.Sample(self.model)
         self.inference_policy = pyrl.strategies.Mode(self.model)
 
         # normalization
-        self.rewards_moments = pynr.nn.ExponentialMovingMoments(
+        self.reward_moments = pynr.nn.ExponentialMovingMoments(
             shape=(), rate=self.params.reward_decay
         )
 
@@ -37,7 +39,7 @@ class Trainer:
         self.checkpoint = tf.train.Checkpoint(
             optimizer=self.optimizer,
             model=self.model,
-            rewards_moments=self.rewards_moments,
+            reward_moments=self.reward_moments,
         )
         self.checkpoint_manager = tf.train.CheckpointManager(
             self.checkpoint, directory=self.job_dir, max_to_keep=None
@@ -58,6 +60,9 @@ class Trainer:
             epsilon_clipping=self.params.epsilon_clipping
         )
         self.entropy_loss_fn = pyrl.losses.PolicyEntropy()
+        self.forward_loss_fn = tf.losses.MeanSquaredError()
+        self.inverse_move_loss_fn = tf.losses.CategoricalCrossentropy()
+        self.inverse_grasp_loss_fn = tf.losses.CategoricalCrossentropy()
 
         # targets
         self.advantages_fn = pyrl.targets.GeneralizedAdvantages(
@@ -82,13 +87,18 @@ class Trainer:
     def _batch_train(self, batch):
         with tf.GradientTape() as tape:
             # forward passes
-            log_probs, entropy, values = self.model.get_training_output(
-                observations=batch["observations"],
-                actions_prev=batch["actions_prev"],
-                rewards_prev=batch["rewards_prev"],
-                actions=batch["actions"],
-                training=True,
-                reset_state=True,
+            outputs = self.model.get_training_outputs(
+                inputs=batch, training=True, reset_state=True
+            )
+            log_probs = outputs["log_probs"]
+            entropy = outputs["entropy"]
+            values = outputs["values"]
+
+            move_hot = tf.one_hot(
+                batch["actions"][..., 0], depth=self.model.action_space.nvec[0]
+            )
+            grasp_hot = tf.one_hot(
+                batch["actions"][..., 1], depth=self.model.action_space.nvec[1]
             )
 
             # losses
@@ -107,6 +117,25 @@ class Trainer:
                 entropy=entropy,
                 sample_weight=batch["weights"] * self.params.entropy_coef,
             )
+            forward_loss = self.forward_loss_fn(
+                y_pred=outputs["embedding_next_pred"],
+                y_true=outputs["embedding_next"],
+                sample_weight=batch["weights"] * self.params.forward_coef,
+            )
+            inverse_move_loss = self.inverse_move_loss_fn(
+                y_pred=outputs["move_pred"],
+                y_true=move_hot,
+                sample_weight=batch["weights"],
+            )
+            inverse_grasp_loss = self.inverse_grasp_loss_fn(
+                y_pred=outputs["grasp_pred"],
+                y_true=grasp_hot,
+                sample_weight=batch["weights"],
+            )
+            inverse_loss = (inverse_move_loss + inverse_grasp_loss) * (
+                1 - self.params.forward_coef
+            )
+            intrinsic_loss = (forward_loss + inverse_loss) * self.params.intrinsic_coef
             regularization_loss = tf.add_n(
                 [
                     tf.nn.l2_loss(tvar) * self.params.l2_coef
@@ -114,7 +143,13 @@ class Trainer:
                 ]
             )
             loss = tf.add_n(
-                [policy_loss, value_loss, entropy_loss, regularization_loss]
+                [
+                    policy_loss,
+                    value_loss,
+                    entropy_loss,
+                    intrinsic_loss,
+                    regularization_loss,
+                ]
             )
 
         # compute gradients
@@ -138,6 +173,17 @@ class Trainer:
         tf.summary.scalar("loss/policy", policy_loss, step=self.optimizer.iterations)
         tf.summary.scalar("loss/value", value_loss, step=self.optimizer.iterations)
         tf.summary.scalar("loss/entropy", entropy_loss, step=self.optimizer.iterations)
+        tf.summary.scalar("loss/forward", forward_loss, step=self.optimizer.iterations)
+        tf.summary.scalar("loss/inverse", inverse_loss, step=self.optimizer.iterations)
+        tf.summary.scalar(
+            "loss/inverse/move", inverse_move_loss, step=self.optimizer.iterations
+        )
+        tf.summary.scalar(
+            "loss/inverse/grasp", inverse_grasp_loss, step=self.optimizer.iterations
+        )
+        tf.summary.scalar(
+            "loss/intrinsic_loss", intrinsic_loss, step=self.optimizer.iterations
+        )
         tf.summary.scalar(
             "loss/regularization", regularization_loss, step=self.optimizer.iterations
         )
@@ -151,10 +197,16 @@ class Trainer:
         )
         tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
 
-    def _train(self, transitions):
-        episodic_rewards = tf.reduce_mean(
-            tf.reduce_sum(transitions["rewards"], axis=-1)
+    def _train(self, it):
+        transitions = self._collect_transitions(
+            env_name=self.params.env_name,
+            episodes=self.params.episodes_train,
+            policy=self.exploration_policy,
+            seed=self.params.seed + it,
         )
+        extrinsic_rewards = transitions["rewards"]
+
+        episodic_rewards = tf.reduce_mean(tf.reduce_sum(extrinsic_rewards, axis=-1))
         tf.print("episodic_rewards/train", episodic_rewards)
         tf.debugging.assert_less_equal(
             episodic_rewards, 1.0, message="episodic rewards must equal <= 1"
@@ -163,33 +215,46 @@ class Trainer:
             "episodic_rewards/train", episodic_rewards, step=self.optimizer.iterations
         )
 
+        # compute anchor values
+        outputs = self.model.get_training_outputs(
+            inputs=transitions, training=False, reset_state=True
+        )
+        log_probs_anchor = outputs["log_probs"]
+        values_anchor = outputs["values"]
+
+        intrinsic_rewards = tf.reduce_sum(
+            tf.math.squared_difference(
+                outputs["embedding_next"], outputs["embedding_next_pred"]
+            ),
+            axis=-1,
+        )
+        episodic_intrinsic_rewards = tf.reduce_mean(intrinsic_rewards)
+        tf.summary.scalar(
+            "episodic_intrinsic_rewards/train",
+            episodic_intrinsic_rewards,
+            step=self.optimizer.iterations,
+        )
+
+        rewards = extrinsic_rewards + intrinsic_rewards * self.params.intrinsic_scale
+
         # update reward moments
-        self.rewards_moments(
-            transitions["rewards"], sample_weight=transitions["weights"], training=True
+        self.reward_moments(
+            rewards, sample_weight=transitions["weights"], training=True
         )
 
         # normalize rewards
         if self.params.center_reward:
             rewards_norm = pynr.math.normalize(
-                transitions["rewards"],
-                loc=self.rewards_moments.mean,
-                scale=self.rewards_moments.std,
+                rewards,
+                loc=self.reward_moments.mean,
+                scale=self.reward_moments.std,
                 sample_weight=transitions["weights"],
             )
         else:
-            rewards_norm = pynr.math.safe_divide(
-                transitions["rewards"], self.rewards_moments.std
+            rewards_norm = (
+                pynr.math.safe_divide(rewards, self.reward_moments.std)
+                * transitions["weights"]
             )
-
-        # compute anchor values
-        log_probs_anchor, _, values_anchor = self.model.get_training_output(
-            observations=transitions["observations"],
-            actions_prev=transitions["actions_prev"],
-            rewards_prev=transitions["rewards_prev"],
-            actions=transitions["actions"],
-            training=False,
-            reset_state=True,
-        )
 
         # targets
         advantages = self.advantages_fn(
@@ -203,10 +268,10 @@ class Trainer:
 
         # summaries
         tf.summary.scalar(
-            "rewards/mean", self.rewards_moments.mean, step=self.optimizer.iterations
+            "rewards/mean", self.reward_moments.mean, step=self.optimizer.iterations
         )
         tf.summary.scalar(
-            "rewards/std", self.rewards_moments.std, step=self.optimizer.iterations
+            "rewards/std", self.reward_moments.std, step=self.optimizer.iterations
         )
         tf.summary.histogram(
             "actions", transitions["actions"][..., 0], step=self.optimizer.iterations
@@ -257,13 +322,7 @@ class Trainer:
 
             # training
             with pynr.debugging.Stopwatch() as train_stopwatch:
-                transitions = self._collect_transitions(
-                    env_name=self.params.env_name,
-                    episodes=self.params.episodes_train,
-                    policy=self.exploration_policy,
-                    seed=self.params.seed + it,
-                )
-                self._train(transitions)
+                self._train(it)
 
             tf.print("time/train", train_stopwatch.duration)
             tf.summary.scalar(
@@ -275,10 +334,15 @@ class Trainer:
 
             # evaluation
             with pynr.debugging.Stopwatch() as eval_stopwatch:
-                with tf.device("/cpu:0"):
-                    self._eval(self.params.env_name)
+                self._eval(self.params.env_name)
+
+                if self.params.env_name != "PerceptualTrapTube-v0":
                     self._eval("PerceptualTrapTube-v0")
+
+                if self.params.env_name != "StructuralTrapTube-v0":
                     self._eval("StructuralTrapTube-v0")
+
+                if self.params.env_name != "SymbolicTrapTube-v0":
                     self._eval("SymbolicTrapTube-v0")
 
             tf.print("time/eval", eval_stopwatch.duration)

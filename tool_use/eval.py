@@ -38,7 +38,9 @@ def main():
     env = create_env(args.env_name, args.seed)
 
     # models
-    model = Model(action_space=env.action_space)
+    model = Model(
+        observation_space=env.observation_space, action_space=env.action_space
+    )
 
     # strategies
     policy = pyrl.strategies.Mode(model)
@@ -70,7 +72,7 @@ def main():
             image_path,
             episode_images[: max_episode_steps + 1],
             loop=1,
-            fps=1,
+            fps=2,
             subrectangles=True,
         )
 
