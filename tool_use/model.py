@@ -199,7 +199,6 @@ class Model(tf.keras.Model):
         grasp_pred = self.dense_inverse_grasp(hidden)
         return move_pred, grasp_pred
 
-    # @tf.function
     def get_training_outputs(self, inputs, training=None, reset_state=None):
         embedding = self._get_embedding(
             observations=inputs["observations"],
@@ -242,7 +241,6 @@ class Model(tf.keras.Model):
 
         return outputs
 
-    # @tf.function
     def call(
         self, observations, actions_prev, rewards_prev, training=None, reset_state=None
     ):
