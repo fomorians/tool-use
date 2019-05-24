@@ -312,10 +312,14 @@ class Trainer:
             step=self.optimizer.iterations,
         )
         tf.summary.histogram(
-            "actions", transitions["actions"][..., 0], step=self.optimizer.iterations
+            "actions/moves",
+            transitions["actions"][..., 0],
+            step=self.optimizer.iterations,
         )
         tf.summary.histogram(
-            "directions", transitions["actions"][..., 1], step=self.optimizer.iterations
+            "actions/directions",
+            transitions["actions"][..., 1],
+            step=self.optimizer.iterations,
         )
 
         data = dict(transitions)

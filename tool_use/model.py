@@ -112,7 +112,7 @@ class Model(tf.keras.Model):
             activation=None,
             kernel_initializer=logits_initializer,
         )
-        self.dense_values_logits = tf.keras.layers.Dense(
+        self.values_logits = tf.keras.layers.Dense(
             units=1, activation=None, kernel_initializer=logits_initializer
         )
 
@@ -219,7 +219,7 @@ class Model(tf.keras.Model):
 
         move_logits = self.move_logits(embedding)
         grasp_logits = self.grasp_logits(embedding)
-        values_logits = self.dense_values_logits(embedding)
+        values_logits = self.values_logits(embedding)
 
         move_dist = tfp.distributions.Categorical(logits=move_logits)
         grasp_dist = tfp.distributions.Categorical(logits=grasp_logits)
