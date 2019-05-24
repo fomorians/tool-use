@@ -54,15 +54,6 @@ class Model(tf.keras.Model):
         self.cell_state = None
 
         self.conv1 = tf.keras.layers.Conv2D(
-            filters=16,
-            kernel_size=2,
-            strides=1,
-            padding="same",
-            activation=pynr.nn.swish,
-            use_bias=True,
-            kernel_initializer=kernel_initializer,
-        )
-        self.conv2 = tf.keras.layers.Conv2D(
             filters=32,
             kernel_size=2,
             strides=1,
@@ -71,10 +62,19 @@ class Model(tf.keras.Model):
             use_bias=True,
             kernel_initializer=kernel_initializer,
         )
+        self.conv2 = tf.keras.layers.Conv2D(
+            filters=64,
+            kernel_size=2,
+            strides=1,
+            padding="same",
+            activation=pynr.nn.swish,
+            use_bias=True,
+            kernel_initializer=kernel_initializer,
+        )
         self.downsample1 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
-        self.block1 = ResidualBlock(filters=32)
+        self.block1 = ResidualBlock(filters=64)
         self.downsample2 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
-        self.block2 = ResidualBlock(filters=32)
+        self.block2 = ResidualBlock(filters=64)
         self.global_pool = tf.keras.layers.GlobalMaxPool2D()
 
         self.move_embedding = tf.keras.layers.Embedding(
@@ -116,13 +116,13 @@ class Model(tf.keras.Model):
             units=1, activation=None, kernel_initializer=logits_initializer
         )
 
-        self.dense_forward1 = tf.keras.layers.Dense(
+        self.dense_forward = tf.keras.layers.Dense(
             units=64,
             activation=pynr.nn.swish,
             use_bias=True,
             kernel_initializer=kernel_initializer,
         )
-        self.dense_inverse1 = tf.keras.layers.Dense(
+        self.dense_inverse = tf.keras.layers.Dense(
             units=64,
             activation=pynr.nn.swish,
             use_bias=True,
@@ -130,13 +130,13 @@ class Model(tf.keras.Model):
         )
         self.dense_inverse_move = tf.keras.layers.Dense(
             units=action_space.nvec[0],
-            activation=None,
+            activation=tf.nn.softmax,
             use_bias=True,
             kernel_initializer=kernel_initializer,
         )
         self.dense_inverse_grasp = tf.keras.layers.Dense(
             units=action_space.nvec[1],
-            activation=None,
+            activation=tf.nn.softmax,
             use_bias=True,
             kernel_initializer=kernel_initializer,
         )
@@ -156,10 +156,12 @@ class Model(tf.keras.Model):
 
         hidden = self.conv1(observations)
         hidden = self.conv2(hidden)
+
         hidden = self.downsample1(hidden)
         hidden = self.block1(hidden)
         hidden = self.downsample2(hidden)
         hidden = self.block2(hidden)
+
         hidden = self.global_pool(hidden)
 
         move_embedding = self.move_embedding(actions_prev[..., 0])
@@ -187,12 +189,12 @@ class Model(tf.keras.Model):
         move_embedding = self.move_embedding(actions[..., 0])
         grasp_embedding = self.grasp_embedding(actions[..., 1])
         hidden = tf.concat([embedding, move_embedding, grasp_embedding], axis=-1)
-        embedding_next = embedding + self.dense_forward1(hidden)
+        embedding_next = embedding + self.dense_forward(hidden)
         return embedding_next
 
     def _inverse_model(self, embedding, embedding_next):
         hidden = tf.concat([embedding, embedding_next], axis=-1)
-        hidden = self.dense_inverse1(hidden)
+        hidden = self.dense_inverse(hidden)
         move_pred = self.dense_inverse_move(hidden)
         grasp_pred = self.dense_inverse_grasp(hidden)
         return move_pred, grasp_pred

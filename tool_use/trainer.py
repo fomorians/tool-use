@@ -31,7 +31,10 @@ class Trainer:
         self.inference_policy = pyrl.strategies.Mode(self.model)
 
         # normalization
-        self.reward_moments = pynr.nn.ExponentialMovingMoments(
+        self.extrinsic_rewards_moments = pynr.nn.ExponentialMovingMoments(
+            shape=(), rate=self.params.reward_decay
+        )
+        self.intrinsic_rewards_moments = pynr.nn.ExponentialMovingMoments(
             shape=(), rate=self.params.reward_decay
         )
 
@@ -39,7 +42,8 @@ class Trainer:
         self.checkpoint = tf.train.Checkpoint(
             optimizer=self.optimizer,
             model=self.model,
-            reward_moments=self.reward_moments,
+            extrinsic_rewards_moments=self.extrinsic_rewards_moments,
+            intrinsic_rewards_moments=self.intrinsic_rewards_moments,
         )
         self.checkpoint_manager = tf.train.CheckpointManager(
             self.checkpoint, directory=self.job_dir, max_to_keep=None
@@ -132,9 +136,9 @@ class Trainer:
                 y_true=grasp_hot,
                 sample_weight=batch["weights"],
             )
-            inverse_loss = (inverse_move_loss + inverse_grasp_loss) * (
-                1 - self.params.forward_coef
-            )
+            inverse_loss = (
+                inverse_move_loss + inverse_grasp_loss
+            ) * self.params.inverse_coef
             intrinsic_loss = (forward_loss + inverse_loss) * self.params.intrinsic_coef
             regularization_loss = tf.add_n(
                 [
@@ -182,7 +186,7 @@ class Trainer:
             "loss/inverse/grasp", inverse_grasp_loss, step=self.optimizer.iterations
         )
         tf.summary.scalar(
-            "loss/intrinsic_loss", intrinsic_loss, step=self.optimizer.iterations
+            "loss/intrinsic", intrinsic_loss, step=self.optimizer.iterations
         )
         tf.summary.scalar(
             "loss/regularization", regularization_loss, step=self.optimizer.iterations
@@ -235,26 +239,46 @@ class Trainer:
             step=self.optimizer.iterations,
         )
 
-        rewards = extrinsic_rewards + intrinsic_rewards * self.params.intrinsic_scale
-
         # update reward moments
-        self.reward_moments(
-            rewards, sample_weight=transitions["weights"], training=True
+        self.extrinsic_rewards_moments(
+            extrinsic_rewards, sample_weight=transitions["weights"], training=True
+        )
+        self.intrinsic_rewards_moments(
+            intrinsic_rewards, sample_weight=transitions["weights"], training=True
         )
 
         # normalize rewards
         if self.params.center_reward:
-            rewards_norm = pynr.math.normalize(
-                rewards,
-                loc=self.reward_moments.mean,
-                scale=self.reward_moments.std,
+            extrinsic_rewards_norm = pynr.math.normalize(
+                extrinsic_rewards,
+                loc=self.extrinsic_rewards_moments.mean,
+                scale=self.extrinsic_rewards_moments.std,
+                sample_weight=transitions["weights"],
+            )
+            intrinsic_rewards_norm = pynr.math.normalize(
+                intrinsic_rewards,
+                loc=self.intrinsic_rewards_moments.mean,
+                scale=self.intrinsic_rewards_moments.std,
                 sample_weight=transitions["weights"],
             )
         else:
-            rewards_norm = (
-                pynr.math.safe_divide(rewards, self.reward_moments.std)
+            extrinsic_rewards_norm = (
+                pynr.math.safe_divide(
+                    extrinsic_rewards, self.extrinsic_rewards_moments.std
+                )
                 * transitions["weights"]
             )
+            intrinsic_rewards_norm = (
+                pynr.math.safe_divide(
+                    intrinsic_rewards, self.intrinsic_rewards_moments.std
+                )
+                * transitions["weights"]
+            )
+
+        rewards_norm = (
+            extrinsic_rewards_norm
+            + intrinsic_rewards_norm * self.params.intrinsic_scale
+        )
 
         # targets
         advantages = self.advantages_fn(
@@ -268,10 +292,24 @@ class Trainer:
 
         # summaries
         tf.summary.scalar(
-            "rewards/mean", self.reward_moments.mean, step=self.optimizer.iterations
+            "extrinsic_rewards/mean",
+            self.extrinsic_rewards_moments.mean,
+            step=self.optimizer.iterations,
         )
         tf.summary.scalar(
-            "rewards/std", self.reward_moments.std, step=self.optimizer.iterations
+            "extrinsic_rewards/std",
+            self.extrinsic_rewards_moments.std,
+            step=self.optimizer.iterations,
+        )
+        tf.summary.scalar(
+            "intrinsic_rewards/mean",
+            self.intrinsic_rewards_moments.mean,
+            step=self.optimizer.iterations,
+        )
+        tf.summary.scalar(
+            "intrinsic_rewards/std",
+            self.intrinsic_rewards_moments.std,
+            step=self.optimizer.iterations,
         )
         tf.summary.histogram(
             "actions", transitions["actions"][..., 0], step=self.optimizer.iterations
