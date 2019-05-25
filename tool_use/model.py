@@ -49,7 +49,6 @@ class Model(tf.keras.Model):
 
         self.initial_hidden_state = tf.Variable(tf.zeros(shape=[1, 64]), trainable=True)
         self.initial_cell_state = tf.Variable(tf.zeros(shape=[1, 64]), trainable=True)
-
         self.hidden_state = None
         self.cell_state = None
 
@@ -71,10 +70,12 @@ class Model(tf.keras.Model):
             use_bias=True,
             kernel_initializer=kernel_initializer,
         )
+
         self.downsample1 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
         self.block1 = ResidualBlock(filters=64)
         self.downsample2 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
         self.block2 = ResidualBlock(filters=64)
+
         self.global_pool = tf.keras.layers.GlobalMaxPool2D()
 
         self.move_embedding = tf.keras.layers.Embedding(
@@ -98,6 +99,9 @@ class Model(tf.keras.Model):
             kernel_initializer=kernel_initializer,
         )
 
+        # self.rnn = tf.keras.layers.GRU(
+        #     units=64, return_sequences=True, return_state=True
+        # )
         self.rnn = tf.keras.layers.LSTM(
             units=64, return_sequences=True, return_state=True
         )
@@ -176,10 +180,11 @@ class Model(tf.keras.Model):
 
         hidden = tf.reshape(hidden, [batch_size, steps, self.dense_hidden.units])
 
+        # if self.hidden_state is None or reset_state:
         if self.hidden_state is None or self.cell_state is None or reset_state:
             self.hidden_state = tf.tile(self.initial_hidden_state, [batch_size, 1])
-            self.cell_state = tf.tile(self.initial_cell_state, [batch_size, 1])
 
+        # hidden, self.hidden_state = self.rnn(hidden, initial_state=self.hidden_state)
         hidden, self.hidden_state, self.cell_state = self.rnn(
             hidden, initial_state=(self.hidden_state, self.cell_state)
         )
@@ -199,6 +204,7 @@ class Model(tf.keras.Model):
         grasp_pred = self.dense_inverse_grasp(hidden)
         return move_pred, grasp_pred
 
+    @tf.function
     def get_training_outputs(self, inputs, training=None, reset_state=None):
         embedding = self._get_embedding(
             observations=inputs["observations"],
@@ -240,17 +246,14 @@ class Model(tf.keras.Model):
 
         return outputs
 
-    def call(
-        self, observations, actions_prev, rewards_prev, training=None, reset_state=None
-    ):
+    def call(self, inputs, training=None, reset_state=None):
         embedding = self._get_embedding(
-            observations=observations,
-            actions_prev=actions_prev,
-            rewards_prev=rewards_prev,
+            observations=inputs["observations"],
+            actions_prev=inputs["actions_prev"],
+            rewards_prev=inputs["rewards_prev"],
             training=training,
             reset_state=reset_state,
         )
-
         move_logits = self.move_logits(embedding)
         grasp_logits = self.grasp_logits(embedding)
 

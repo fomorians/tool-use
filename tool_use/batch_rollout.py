@@ -53,14 +53,13 @@ class BatchRollout:
                 reset_state = step == 0
 
                 observation = observation.astype(observation_space.dtype)
-                action_batch = policy(
-                    observation[:, None, ...],
-                    action_prev[:, None, ...],
-                    reward_prev[:, None, ...],
-                    training=False,
-                    reset_state=reset_state,
-                )
-                action = action_batch[:, 0].numpy()
+                inputs = {
+                    "observations": observation[:, None, ...],
+                    "actions_prev": action_prev[:, None, ...],
+                    "rewards_prev": reward_prev[:, None, ...],
+                }
+                actions_batch = policy(inputs, training=False, reset_state=reset_state)
+                action = actions_batch[:, 0].numpy()
                 action = action.astype(action_space.dtype)
 
                 observation_next, reward, done, info = self.env.step(action)

@@ -210,13 +210,8 @@ class Trainer:
         )
         tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
 
-    def _train(self, it):
-        transitions = self._collect_transitions(
-            env_name=self.params.env_name,
-            episodes=self.params.episodes_train,
-            policy=self.exploration_policy,
-            seed=self.params.seed + it,
-        )
+    @tf.function
+    def _train(self, transitions):
         extrinsic_rewards = transitions["rewards"]
 
         episodic_rewards = tf.reduce_mean(tf.reduce_sum(extrinsic_rewards, axis=-1))
@@ -268,7 +263,7 @@ class Trainer:
                 intrinsic_rewards,
                 loc=self.intrinsic_rewards_moments.mean,
                 scale=self.intrinsic_rewards_moments.std,
-                sample_weight=transitions["weights"],
+                sample_weight=transitions["weights"] * self.params.intrinsic_scale,
             )
         else:
             extrinsic_rewards_norm = (
@@ -277,12 +272,9 @@ class Trainer:
                 )
                 * transitions["weights"]
             )
-            intrinsic_rewards_norm = (
-                pynr.math.safe_divide(
-                    intrinsic_rewards, self.intrinsic_rewards_moments.std
-                )
-                * transitions["weights"]
-            ) * self.params.intrinsic_scale
+            intrinsic_rewards_norm = pynr.math.safe_divide(
+                intrinsic_rewards, self.intrinsic_rewards_moments.std
+            ) * (transitions["weights"] * self.params.intrinsic_scale)
 
         # targets
         extrinsic_advantages = self.extrinsic_advantages_fn(
@@ -379,7 +371,13 @@ class Trainer:
 
             # training
             with pynr.debugging.Stopwatch() as train_stopwatch:
-                self._train(it)
+                transitions = self._collect_transitions(
+                    env_name=self.params.env_name,
+                    episodes=self.params.episodes_train,
+                    policy=self.exploration_policy,
+                    seed=self.params.seed + it,
+                )
+                self._train(transitions)
 
             tf.print("time/train", train_stopwatch.duration)
             tf.summary.scalar(
