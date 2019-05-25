@@ -64,8 +64,9 @@ def main():
     # save
     timestamp = int(time.time())
     for episode, episode_images in enumerate(transitions["images"]):
+        rewards = np.sum(transitions["rewards"][episode], axis=-1)
         image_path = os.path.join(
-            args.job_dir, "render_{}_{}.gif".format(timestamp, episode)
+            args.job_dir, "render_{}_{}_{:.1f}.gif".format(timestamp, episode, rewards)
         )
         episode_weights = transitions["weights"][episode]
         max_episode_steps = int(episode_weights.sum())
@@ -73,7 +74,7 @@ def main():
             image_path,
             episode_images[: max_episode_steps + 1],
             loop=1,
-            fps=2,
+            fps=3,
             subrectangles=True,
         )
 
