@@ -21,7 +21,7 @@ class Trainer:
         self.optimizer = tf.optimizers.Adam(learning_rate=self.params.learning_rate)
 
         # models
-        env = create_env(self.params.env_name, self.params.seed)
+        env = create_env(self.params.env_name)
         self.model = Model(
             observation_space=env.observation_space, action_space=env.action_space
         )
@@ -81,9 +81,10 @@ class Trainer:
     def _collect_transitions(self, env_name, episodes, policy, seed):
         with tf.device("/cpu:0"):
             env = pyrl.wrappers.Batch(
-                lambda: create_env(env_name, seed),
+                lambda batch_id: create_env(env_name),
                 batch_size=self.params.env_batch_size,
             )
+            env.seed(seed)
             rollout = BatchRollout(env, self.params.max_episode_steps)
             transitions = rollout(policy, episodes)
         return transitions

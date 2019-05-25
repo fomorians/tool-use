@@ -35,7 +35,8 @@ def main():
     tf.random.set_seed(args.seed)
 
     # environment
-    env = create_env(args.env_name, args.seed)
+    env = create_env(args.env_name)
+    env.seed(args.seed)
 
     # models
     model = Model(
