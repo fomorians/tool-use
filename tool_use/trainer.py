@@ -69,13 +69,21 @@ class Trainer:
         self.inverse_grasp_loss_fn = tf.losses.CategoricalCrossentropy()
 
         # targets
-        self.advantages_fn = pyrl.targets.GeneralizedAdvantages(
-            discount_factor=self.params.discount_factor,
+        self.extrinsic_advantages_fn = pyrl.targets.GeneralizedAdvantages(
+            discount_factor=self.params.extrinsic_discount_factor,
             lambda_factor=self.params.lambda_factor,
             normalize=self.params.normalize_advantages,
         )
-        self.returns_fn = pyrl.targets.DiscountedRewards(
-            discount_factor=self.params.discount_factor
+        self.intrinsic_advantages_fn = pyrl.targets.GeneralizedAdvantages(
+            discount_factor=self.params.intrinsic_discount_factor,
+            lambda_factor=self.params.lambda_factor,
+            normalize=self.params.normalize_advantages,
+        )
+        self.extrinsic_returns_fn = pyrl.targets.DiscountedRewards(
+            discount_factor=self.params.extrinsic_discount_factor
+        )
+        self.intrinsic_returns_fn = pyrl.targets.DiscountedRewards(
+            discount_factor=self.params.intrinsic_discount_factor
         )
 
     def _collect_transitions(self, env_name, episodes, policy, seed):
@@ -114,8 +122,8 @@ class Trainer:
                 sample_weight=batch["weights"],
             )
             value_loss = self.value_loss_fn(
-                y_pred=values[..., None],
-                y_true=batch["returns"][..., None],
+                y_pred=values,
+                y_true=batch["returns"],
                 sample_weight=batch["weights"] * self.params.value_coef,
             )
             entropy_loss = self.entropy_loss_fn(
@@ -274,22 +282,29 @@ class Trainer:
                     intrinsic_rewards, self.intrinsic_rewards_moments.std
                 )
                 * transitions["weights"]
-            )
-
-        rewards_norm = (
-            extrinsic_rewards_norm
-            + intrinsic_rewards_norm * self.params.intrinsic_scale
-        )
+            ) * self.params.intrinsic_scale
 
         # targets
-        advantages = self.advantages_fn(
-            rewards=rewards_norm,
-            values=values_anchor,
+        extrinsic_advantages = self.extrinsic_advantages_fn(
+            rewards=extrinsic_rewards_norm,
+            values=values_anchor[..., 0],
             sample_weight=transitions["weights"],
         )
-        returns = self.returns_fn(
-            rewards=rewards_norm, sample_weight=transitions["weights"]
+        intrinsic_advantages = self.intrinsic_advantages_fn(
+            rewards=intrinsic_rewards_norm,
+            values=values_anchor[..., 1],
+            sample_weight=transitions["weights"],
         )
+
+        extrinsic_returns = self.extrinsic_returns_fn(
+            rewards=extrinsic_rewards_norm, sample_weight=transitions["weights"]
+        )
+        intrinsic_returns = self.intrinsic_returns_fn(
+            rewards=intrinsic_rewards_norm, sample_weight=transitions["weights"]
+        )
+
+        advantages = extrinsic_advantages + intrinsic_advantages
+        returns = tf.stack([extrinsic_returns, intrinsic_returns], axis=-1)
 
         # summaries
         tf.summary.scalar(
@@ -324,7 +339,6 @@ class Trainer:
         )
 
         data = dict(transitions)
-        data["rewards_norm"] = rewards_norm
         data["log_probs_anchor"] = log_probs_anchor
         data["advantages"] = advantages
         data["returns"] = returns

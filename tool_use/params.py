@@ -36,7 +36,8 @@ class HyperParams:
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)
-    discount_factor = attr.ib(default=0.99)
+    extrinsic_discount_factor = attr.ib(default=0.98)
+    intrinsic_discount_factor = attr.ib(default=0.99)
     lambda_factor = attr.ib(default=0.95)
 
     @staticmethod
