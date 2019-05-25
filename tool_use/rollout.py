@@ -39,7 +39,13 @@ class Rollout:
                 width * self.env.resize_scale,
             )
             images = np.zeros(
-                shape=(episodes, self.max_episode_steps, image_height, image_width, 3),
+                shape=(
+                    episodes,
+                    self.max_episode_steps + 1,
+                    image_height,
+                    image_width,
+                    3,
+                ),
                 dtype=np.uint8,
             )
 
@@ -77,7 +83,7 @@ class Rollout:
 
                 if done:
                     if render:
-                        images[episode, step] = self.env.render(mode="rgb_array")
+                        images[episode, step + 1] = self.env.render(mode="rgb_array")
                     break
 
                 observation = observation_next
