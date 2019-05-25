@@ -48,9 +48,7 @@ class Model(tf.keras.Model):
         logits_initializer = tf.initializers.VarianceScaling(scale=1.0)
 
         self.initial_hidden_state = tf.Variable(tf.zeros(shape=[1, 64]), trainable=True)
-        self.initial_cell_state = tf.Variable(tf.zeros(shape=[1, 64]), trainable=True)
         self.hidden_state = None
-        self.cell_state = None
 
         self.conv1 = tf.keras.layers.Conv2D(
             filters=32,
@@ -99,10 +97,7 @@ class Model(tf.keras.Model):
             kernel_initializer=kernel_initializer,
         )
 
-        # self.rnn = tf.keras.layers.GRU(
-        #     units=64, return_sequences=True, return_state=True
-        # )
-        self.rnn = tf.keras.layers.LSTM(
+        self.rnn = tf.keras.layers.GRU(
             units=64, return_sequences=True, return_state=True
         )
 
@@ -180,14 +175,10 @@ class Model(tf.keras.Model):
 
         hidden = tf.reshape(hidden, [batch_size, steps, self.dense_hidden.units])
 
-        # if self.hidden_state is None or reset_state:
-        if self.hidden_state is None or self.cell_state is None or reset_state:
+        if self.hidden_state is None or reset_state:
             self.hidden_state = tf.tile(self.initial_hidden_state, [batch_size, 1])
 
-        # hidden, self.hidden_state = self.rnn(hidden, initial_state=self.hidden_state)
-        hidden, self.hidden_state, self.cell_state = self.rnn(
-            hidden, initial_state=(self.hidden_state, self.cell_state)
-        )
+        hidden, self.hidden_state = self.rnn(hidden, initial_state=self.hidden_state)
         return hidden
 
     def _forward_model(self, embedding, actions):
