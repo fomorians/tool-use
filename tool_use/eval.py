@@ -43,7 +43,7 @@ def main():
     )
 
     # strategies
-    policy = pyrl.strategies.Sample(model)
+    policy = pyrl.strategies.Mode(model)
 
     # checkpoints
     checkpoint = tf.train.Checkpoint(model=model)

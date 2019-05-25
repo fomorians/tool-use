@@ -12,19 +12,19 @@ class HyperParams:
     max_episode_steps = attr.ib(default=50)
 
     # training
-    train_iters = attr.ib(default=20)
+    train_iters = attr.ib(default=100)
     episodes_train = attr.ib(default=1024)
     episodes_eval = attr.ib(default=128)
     epochs = attr.ib(default=10)
     batch_size = attr.ib(default=128)
     reward_decay = attr.ib(default=0.9)
-    intrinsic_scale = attr.ib(default=1.0)
+    intrinsic_scale = attr.ib(default=0.1)
     center_reward = attr.ib(default=False)
     normalize_advantages = attr.ib(default=True)
 
     # losses
     value_coef = attr.ib(default=1e-2)
-    entropy_coef = attr.ib(default=1e-3)
+    entropy_coef = attr.ib(default=1e-4)
     forward_coef = attr.ib(default=1.0)
     inverse_coef = attr.ib(default=1e-1)
     intrinsic_coef = attr.ib(default=10.0)
@@ -36,7 +36,7 @@ class HyperParams:
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)
-    discount_factor = attr.ib(default=0.98)
+    discount_factor = attr.ib(default=0.99)
     lambda_factor = attr.ib(default=0.95)
 
     @staticmethod
