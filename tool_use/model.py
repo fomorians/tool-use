@@ -116,7 +116,7 @@ class Model(tf.keras.Model):
 
         self.dense_forward = tf.keras.layers.Dense(
             units=64,
-            activation=pynr.nn.swish,
+            activation=None,
             use_bias=True,
             kernel_initializer=logits_initializer,
         )
