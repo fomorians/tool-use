@@ -8,7 +8,7 @@ REQUIRED_PACKAGES = [
     "pycolab",
     "gym_pycolab",
     "gym_tool_use",
-    "tf-nightly-gpu-2.0-preview",
+    "tf-nightly-gpu-2-0-preview",
     "tfp-nightly",
 ]
 

@@ -210,7 +210,7 @@ class Trainer:
         )
         tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
 
-    @tf.function
+    # @tf.function
     def _train(self, transitions):
         extrinsic_rewards = transitions["rewards"]
 
