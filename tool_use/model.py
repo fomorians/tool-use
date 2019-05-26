@@ -69,10 +69,10 @@ class Model(tf.keras.Model):
             kernel_initializer=kernel_initializer,
         )
 
-        self.downsample1 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
-        self.block1 = ResidualBlock(filters=64)
-        self.downsample2 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
-        self.block2 = ResidualBlock(filters=64)
+        # self.downsample1 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
+        # self.block1 = ResidualBlock(filters=64)
+        # self.downsample2 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
+        # self.block2 = ResidualBlock(filters=64)
 
         self.global_pool = tf.keras.layers.GlobalMaxPool2D()
 
@@ -88,7 +88,6 @@ class Model(tf.keras.Model):
             use_bias=True,
             kernel_initializer=kernel_initializer,
         )
-        self.concat = tf.keras.layers.Concatenate()
 
         self.dense_hidden = tf.keras.layers.Dense(
             units=64,
@@ -103,12 +102,12 @@ class Model(tf.keras.Model):
 
         self.move_logits = tf.keras.layers.Dense(
             units=action_space.nvec[0],
-            activation=None,
+            activation=tf.nn.softmax,
             kernel_initializer=logits_initializer,
         )
         self.grasp_logits = tf.keras.layers.Dense(
             units=action_space.nvec[1],
-            activation=None,
+            activation=tf.nn.softmax,
             kernel_initializer=logits_initializer,
         )
         self.values_logits = tf.keras.layers.Dense(
@@ -117,9 +116,9 @@ class Model(tf.keras.Model):
 
         self.dense_forward = tf.keras.layers.Dense(
             units=64,
-            activation=pynr.nn.swish,
+            activation=None,
             use_bias=True,
-            kernel_initializer=kernel_initializer,
+            kernel_initializer=logits_initializer,
         )
         self.dense_inverse = tf.keras.layers.Dense(
             units=64,
@@ -131,13 +130,13 @@ class Model(tf.keras.Model):
             units=action_space.nvec[0],
             activation=tf.nn.softmax,
             use_bias=True,
-            kernel_initializer=kernel_initializer,
+            kernel_initializer=logits_initializer,
         )
         self.dense_inverse_grasp = tf.keras.layers.Dense(
             units=action_space.nvec[1],
             activation=tf.nn.softmax,
             use_bias=True,
-            kernel_initializer=kernel_initializer,
+            kernel_initializer=logits_initializer,
         )
 
     def _get_embedding(
@@ -156,10 +155,10 @@ class Model(tf.keras.Model):
         hidden = self.conv1(observations)
         hidden = self.conv2(hidden)
 
-        hidden = self.downsample1(hidden)
-        hidden = self.block1(hidden)
-        hidden = self.downsample2(hidden)
-        hidden = self.block2(hidden)
+        # hidden = self.downsample1(hidden)
+        # hidden = self.block1(hidden)
+        # hidden = self.downsample2(hidden)
+        # hidden = self.block2(hidden)
 
         hidden = self.global_pool(hidden)
 
@@ -167,8 +166,8 @@ class Model(tf.keras.Model):
         grasp_embedding = self.grasp_embedding(actions_prev[..., 1])
         reward_embedding = self.reward_embedding(rewards_prev)
 
-        hidden = self.concat(
-            [hidden, move_embedding, grasp_embedding, reward_embedding]
+        hidden = tf.concat(
+            [hidden, move_embedding, grasp_embedding, reward_embedding], axis=-1
         )
 
         hidden = self.dense_hidden(hidden)
@@ -248,8 +247,8 @@ class Model(tf.keras.Model):
         move_logits = self.move_logits(embedding)
         grasp_logits = self.grasp_logits(embedding)
 
-        move_dist = tfp.distributions.Categorical(logits=move_logits)
-        grasp_dist = tfp.distributions.Categorical(logits=grasp_logits)
+        move_dist = tfp.distributions.Categorical(probs=move_logits)
+        grasp_dist = tfp.distributions.Categorical(probs=grasp_logits)
         dist = pynr.distributions.MultiCategorical([move_dist, grasp_dist])
 
         return dist
