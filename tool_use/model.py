@@ -15,7 +15,6 @@ class ResidualBlock(tf.keras.layers.Layer):
             strides=1,
             padding="same",
             activation=None,
-            use_bias=True,
             kernel_initializer=kernel_initializer,
         )
         self.conv2 = tf.keras.layers.Conv2D(
@@ -24,7 +23,6 @@ class ResidualBlock(tf.keras.layers.Layer):
             strides=1,
             padding="same",
             activation=None,
-            use_bias=True,
             kernel_initializer=kernel_initializer,
         )
 
@@ -63,7 +61,6 @@ class Model(tf.keras.Model):
             strides=1,
             padding="same",
             activation=pynr.nn.swish,
-            use_bias=True,
             kernel_initializer=kernel_initializer,
         )
         self.conv2 = tf.keras.layers.Conv2D(
@@ -72,7 +69,6 @@ class Model(tf.keras.Model):
             strides=1,
             padding="same",
             activation=pynr.nn.swish,
-            use_bias=True,
             kernel_initializer=kernel_initializer,
         )
 
@@ -90,17 +86,11 @@ class Model(tf.keras.Model):
             input_dim=action_space.nvec[1], output_dim=8
         )
         self.reward_embedding = tf.keras.layers.Dense(
-            units=8,
-            activation=pynr.nn.swish,
-            use_bias=True,
-            kernel_initializer=kernel_initializer,
+            units=8, activation=pynr.nn.swish, kernel_initializer=kernel_initializer
         )
 
         self.dense_hidden = tf.keras.layers.Dense(
-            units=64,
-            activation=pynr.nn.swish,
-            use_bias=True,
-            kernel_initializer=kernel_initializer,
+            units=64, activation=pynr.nn.swish, kernel_initializer=kernel_initializer
         )
 
         self.layer_norm = tf.keras.layers.LayerNormalization()
@@ -127,27 +117,19 @@ class Model(tf.keras.Model):
         )
 
         self.dense_forward = tf.keras.layers.Dense(
-            units=64,
-            activation=None,
-            use_bias=True,
-            kernel_initializer=logits_initializer,
+            units=64, activation=None, kernel_initializer=logits_initializer
         )
         self.dense_inverse = tf.keras.layers.Dense(
-            units=64,
-            activation=pynr.nn.swish,
-            use_bias=True,
-            kernel_initializer=kernel_initializer,
+            units=64, activation=pynr.nn.swish, kernel_initializer=kernel_initializer
         )
         self.dense_inverse_move = tf.keras.layers.Dense(
             units=action_space.nvec[0],
             activation=tf.nn.softmax,
-            use_bias=True,
             kernel_initializer=logits_initializer,
         )
         self.dense_inverse_grasp = tf.keras.layers.Dense(
             units=action_space.nvec[1],
             activation=tf.nn.softmax,
-            use_bias=True,
             kernel_initializer=logits_initializer,
         )
 
