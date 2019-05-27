@@ -20,9 +20,14 @@ def main():
     parser.add_argument("--job-dir", required=True)
     parser.add_argument("--episodes", default=1, type=int)
     parser.add_argument("--seed", default=0, type=int)
-    parser.add_argument("--render", action="store_true")
     args = parser.parse_args()
     print(args)
+
+    timestamp = int(time.time())
+    image_dir = os.path.join(args.job_dir, "results", args.env_name, str(timestamp))
+
+    # make job directory
+    os.makedirs(image_dir, exist_ok=True)
 
     # params
     params_path = os.path.join(args.job_dir, "params.json")
@@ -62,12 +67,9 @@ def main():
     print("episodic_rewards", episodic_rewards)
 
     # save
-    timestamp = int(time.time())
     for episode, episode_images in enumerate(transitions["images"]):
         rewards = np.sum(transitions["rewards"][episode], axis=-1)
-        image_path = os.path.join(
-            args.job_dir, "render_{}_{}_{:.1f}.gif".format(timestamp, episode, rewards)
-        )
+        image_path = os.path.join(image_dir, "{}_{:.2f}.gif".format(episode, rewards))
         episode_weights = transitions["weights"][episode]
         max_episode_steps = int(episode_weights.sum())
         imageio.mimwrite(
