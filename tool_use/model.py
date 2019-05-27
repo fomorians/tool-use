@@ -151,7 +151,7 @@ class Model(tf.keras.Model):
             kernel_initializer=logits_initializer,
         )
 
-    def _get_embedding(
+    def _embedding(
         self, observations, actions_prev, rewards_prev, training=None, reset_state=None
     ):
         batch_size, steps, height, width, channels = observations.shape
@@ -206,16 +206,25 @@ class Model(tf.keras.Model):
         grasp_pred = self.dense_inverse_grasp(hidden)
         return move_pred, grasp_pred
 
+    def _policy_dist(self, embedding):
+        move_logits = self.move_logits(embedding)
+        grasp_logits = self.grasp_logits(embedding)
+
+        move_dist = tfp.distributions.Categorical(logits=move_logits)
+        grasp_dist = tfp.distributions.Categorical(logits=grasp_logits)
+        dist = pynr.distributions.MultiCategorical([move_dist, grasp_dist])
+        return dist
+
     # @tf.function
     def get_training_outputs(self, inputs, training=None, reset_state=None):
-        embedding = self._get_embedding(
+        embedding = self._embedding(
             observations=inputs["observations"],
             actions_prev=inputs["actions_prev"],
             rewards_prev=inputs["rewards_prev"],
             training=training,
             reset_state=reset_state,
         )
-        embedding_next = self._get_embedding(
+        embedding_next = self._embedding(
             observations=inputs["observations_next"],
             actions_prev=inputs["actions"],
             rewards_prev=inputs["rewards"],
@@ -225,13 +234,8 @@ class Model(tf.keras.Model):
         embedding_next_pred = self._forward_model(embedding, inputs["actions"])
         move_pred, grasp_pred = self._inverse_model(embedding, embedding_next)
 
-        move_logits = self.move_logits(embedding)
-        grasp_logits = self.grasp_logits(embedding)
         values = self.values_logits(embedding)
-
-        move_dist = tfp.distributions.Categorical(logits=move_logits)
-        grasp_dist = tfp.distributions.Categorical(logits=grasp_logits)
-        dist = pynr.distributions.MultiCategorical([move_dist, grasp_dist])
+        dist = self._policy_dist(embedding)
 
         log_probs = dist.log_prob(inputs["actions"])
         entropy = dist.entropy()
@@ -249,18 +253,12 @@ class Model(tf.keras.Model):
         return outputs
 
     def call(self, inputs, training=None, reset_state=None):
-        embedding = self._get_embedding(
+        embedding = self._embedding(
             observations=inputs["observations"],
             actions_prev=inputs["actions_prev"],
             rewards_prev=inputs["rewards_prev"],
             training=training,
             reset_state=reset_state,
         )
-        move_logits = self.move_logits(embedding)
-        grasp_logits = self.grasp_logits(embedding)
-
-        move_dist = tfp.distributions.Categorical(logits=move_logits)
-        grasp_dist = tfp.distributions.Categorical(logits=grasp_logits)
-        dist = pynr.distributions.MultiCategorical([move_dist, grasp_dist])
-
+        dist = self._policy_dist(embedding)
         return dist
