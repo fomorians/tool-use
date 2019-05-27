@@ -35,6 +35,9 @@ class BatchRollout:
         rewards_prev = np.zeros(
             shape=(episodes, self.max_episode_steps), dtype=np.float32
         )
+        values_prev = np.zeros(
+            shape=(episodes, self.max_episode_steps), dtype=np.float32
+        )
         weights = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
 
         for batch in range(batches):
@@ -58,9 +61,17 @@ class BatchRollout:
                     "actions_prev": action_prev[:, None, ...],
                     "rewards_prev": reward_prev[:, None, ...],
                 }
-                actions_batch = policy(inputs, training=False, reset_state=reset_state)
+                embedding = policy.embed(
+                    inputs, training=False, reset_state=reset_state
+                )
+                actions_batch = policy(embedding)
+                values_batch = policy.value(embedding)
+
                 action = actions_batch[:, 0].numpy()
                 action = action.astype(action_space.dtype)
+
+                value = values_batch[:, 0].numpy()
+                value = value.astype(np.float32)
 
                 observation_next, reward, done, info = self.env.step(action)
 
@@ -70,6 +81,7 @@ class BatchRollout:
                 observations_next[batch_start:batch_end, step] = observation_next
                 rewards[batch_start:batch_end, step] = reward
                 rewards_prev[batch_start:batch_end, step] = reward_prev
+                values_prev[batch_start:batch_end, step] = value
 
                 for i in range(batch_size):
                     # if the ith rollout is not done set the weight to 1
