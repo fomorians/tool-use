@@ -103,13 +103,13 @@ class Model(tf.keras.Model):
             kernel_initializer=kernel_initializer,
         )
 
-        # self.layer_norm = tf.keras.layers.LayerNormalization()
+        self.layer_norm = tf.keras.layers.LayerNormalization()
 
         self.rnn = tf.keras.layers.GRU(
             units=64,
             return_sequences=True,
             return_state=True,
-            # activation=layer_norm_tanh(self.layer_norm),
+            activation=layer_norm_tanh(self.layer_norm),
         )
 
         self.move_logits = tf.keras.layers.Dense(
