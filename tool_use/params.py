@@ -12,7 +12,7 @@ class HyperParams:
     max_episode_steps = attr.ib(default=50)
 
     # training
-    train_iters = attr.ib(default=100)
+    train_iters = attr.ib(default=50)
     episodes_train = attr.ib(default=1024)
     episodes_eval = attr.ib(default=128)
     epochs = attr.ib(default=10)
