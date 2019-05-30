@@ -72,8 +72,10 @@ class Model(tf.keras.Model):
             kernel_initializer=kernel_initializer,
         )
 
-        self.downsample = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
-        self.residual_block = ResidualBlock(filters=64)
+        self.downsample1 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
+        self.residual_block1 = ResidualBlock(filters=64)
+        self.downsample2 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
+        self.residual_block2 = ResidualBlock(filters=64)
 
         self.global_pool = tf.keras.layers.GlobalMaxPool2D()
 
@@ -111,7 +113,7 @@ class Model(tf.keras.Model):
             kernel_initializer=logits_initializer,
         )
         self.values_logits = tf.keras.layers.Dense(
-            units=2, activation=None, kernel_initializer=logits_initializer
+            units=1, activation=None, kernel_initializer=logits_initializer
         )
 
         self.dense_forward = tf.keras.layers.Dense(
@@ -147,8 +149,10 @@ class Model(tf.keras.Model):
         hidden = self.conv1(observations)
         hidden = self.conv2(hidden)
 
-        hidden = self.downsample(hidden)
-        hidden = self.residual_block(hidden)
+        hidden = self.downsample1(hidden)
+        hidden = self.residual_block1(hidden)
+        hidden = self.downsample2(hidden)
+        hidden = self.residual_block2(hidden)
 
         hidden = self.global_pool(hidden)
 
@@ -211,7 +215,9 @@ class Model(tf.keras.Model):
         embedding_next_pred = self.forward_model(embedding, inputs["actions"])
         move_pred, grasp_pred = self.inverse_model(embedding, embedding_next)
 
-        values = self.values_logits(embedding)
+        values_logits = self.values_logits(embedding)
+        values = values_logits[..., 0]
+
         dist = self.policy_dist(embedding)
 
         log_probs = dist.log_prob(inputs["actions"])

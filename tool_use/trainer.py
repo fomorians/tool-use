@@ -69,20 +69,12 @@ class Trainer:
         self.inverse_grasp_loss_fn = tf.losses.CategoricalCrossentropy()
 
         # targets
-        self.extrinsic_advantages_fn = pyrl.targets.GeneralizedAdvantages(
+        self.advantages_fn = pyrl.targets.GeneralizedAdvantages(
             discount_factor=self.params.discount_factor,
             lambda_factor=self.params.lambda_factor,
-            normalize=False,
+            normalize=self.params.normalize_advantages,
         )
-        self.intrinsic_advantages_fn = pyrl.targets.GeneralizedAdvantages(
-            discount_factor=self.params.discount_factor,
-            lambda_factor=self.params.lambda_factor,
-            normalize=False,
-        )
-        self.extrinsic_returns_fn = pyrl.targets.DiscountedRewards(
-            discount_factor=self.params.discount_factor
-        )
-        self.intrinsic_returns_fn = pyrl.targets.DiscountedRewards(
+        self.returns_fn = pyrl.targets.DiscountedRewards(
             discount_factor=self.params.discount_factor
         )
 
@@ -122,8 +114,8 @@ class Trainer:
                 sample_weight=batch["weights"],
             )
             value_loss = self.value_loss_fn(
-                y_pred=values,
-                y_true=batch["returns"],
+                y_pred=values[..., None],
+                y_true=batch["returns"][..., None],
                 sample_weight=batch["weights"] * self.params.value_coef,
             )
             entropy_loss = self.entropy_loss_fn(
@@ -277,43 +269,17 @@ class Trainer:
                 intrinsic_rewards, self.intrinsic_rewards_moments.std
             ) * (transitions["weights"] * self.params.intrinsic_scale)
 
+        rewards_norm = extrinsic_rewards_norm + intrinsic_rewards_norm
+
         # targets
-        extrinsic_advantages = self.extrinsic_advantages_fn(
-            rewards=extrinsic_rewards_norm,
-            values=values_anchor[..., 0],
+        advantages = self.advantages_fn(
+            rewards=rewards_norm,
+            values=values_anchor,
             sample_weight=transitions["weights"],
         )
-        intrinsic_advantages = self.intrinsic_advantages_fn(
-            rewards=intrinsic_rewards_norm,
-            values=values_anchor[..., 1],
-            sample_weight=transitions["weights"],
+        returns = self.returns_fn(
+            rewards=rewards_norm, sample_weight=transitions["weights"]
         )
-
-        extrinsic_returns = self.extrinsic_returns_fn(
-            rewards=extrinsic_rewards_norm, sample_weight=transitions["weights"]
-        )
-        intrinsic_returns = self.intrinsic_returns_fn(
-            rewards=intrinsic_rewards_norm, sample_weight=transitions["weights"]
-        )
-
-        advantages = extrinsic_advantages + intrinsic_advantages
-
-        if self.params.normalize_advantages:
-            advantages_mean, advantages_variance = tf.nn.weighted_moments(
-                advantages,
-                axes=[0, 1],
-                frequency_weights=transitions["weights"],
-                keepdims=True,
-            )
-            advantages_std = tf.sqrt(advantages_variance)
-            advantages = pynr.math.normalize(
-                advantages,
-                loc=advantages_mean,
-                scale=advantages_std,
-                sample_weight=transitions["weights"],
-            )
-
-        returns = tf.stack([extrinsic_returns, intrinsic_returns], axis=-1)
 
         # summaries
         tf.summary.scalar(
