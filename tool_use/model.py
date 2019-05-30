@@ -144,7 +144,7 @@ class Model(tf.keras.Model):
         actions_prev = tf.reshape(
             actions_prev, [batch_size * steps, actions_prev.shape[-1]]
         )
-        rewards_prev = tf.reshape(rewards_prev, [batch_size * steps, 1])
+        rewards_prev = tf.reshape(rewards_prev, [batch_size * steps, 2])
 
         hidden = self.conv1(observations)
         hidden = self.conv2(hidden)
@@ -203,27 +203,25 @@ class Model(tf.keras.Model):
             observations=inputs["observations"],
             actions_prev=inputs["actions_prev"],
             rewards_prev=inputs["rewards_prev"],
-            values_prev=inputs["values_prev"],
             training=training,
             reset_state=reset_state,
         )
+
+        embedding_next = self._embedding(
+            observations=inputs["observations_next"],
+            actions_prev=inputs["actions"],
+            rewards_prev=inputs["rewards"],
+            training=training,
+            reset_state=reset_state,
+        )
+        embedding_next_pred = self._forward_model(embedding, inputs["actions"])
+        move_pred, grasp_pred = self._inverse_model(embedding, embedding_next)
 
         values = self.values_logits(embedding)
         dist = self._policy_dist(embedding)
 
         log_probs = dist.log_prob(inputs["actions"])
         entropy = dist.entropy()
-
-        embedding_next = self._embedding(
-            observations=inputs["observations_next"],
-            actions_prev=inputs["actions"],
-            rewards_prev=inputs["rewards"],
-            values_prev=values,
-            training=training,
-            reset_state=reset_state,
-        )
-        embedding_next_pred = self._forward_model(embedding, inputs["actions"])
-        move_pred, grasp_pred = self._inverse_model(embedding, embedding_next)
 
         outputs = {
             "log_probs": log_probs,

@@ -6,7 +6,7 @@ class BatchRollout:
         self.env = env
         self.max_episode_steps = max_episode_steps
 
-    def __call__(self, policy, episodes):
+    def __call__(self, policy, episodes, render=False):
         assert episodes % len(self.env) == 0
 
         observation_space = self.env.observation_space
@@ -33,12 +33,27 @@ class BatchRollout:
         )
         rewards = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
         rewards_prev = np.zeros(
-            shape=(episodes, self.max_episode_steps), dtype=np.float32
-        )
-        values_prev = np.zeros(
-            shape=(episodes, self.max_episode_steps), dtype=np.float32
+            shape=(episodes, self.max_episode_steps, 2), dtype=np.float32
         )
         weights = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
+
+        if render:
+            height, width, _ = observation_space.shape
+            image_height, image_width = (
+                height * self.env.resize_scale,
+                width * self.env.resize_scale,
+            )
+            num_channels = 3
+            images = np.zeros(
+                shape=(
+                    episodes,
+                    self.max_episode_steps,
+                    image_height,
+                    image_width,
+                    num_channels,
+                ),
+                dtype=np.uint8,
+            )
 
         for batch in range(batches):
             batch_start = batch * batch_size
@@ -50,9 +65,12 @@ class BatchRollout:
             action_prev = np.zeros(
                 shape=(batch_size,) + action_space.shape, dtype=action_space.dtype
             )
-            reward_prev = np.zeros(shape=(batch_size), dtype=np.float32)
+            reward_prev = np.zeros(shape=(batch_size, 2), dtype=np.float32)
 
             for step in range(self.max_episode_steps):
+                if render:
+                    images[:, step] = self.env.render(mode="rgb_array")
+
                 reset_state = step == 0
 
                 observation = observation.astype(observation_space.dtype)
@@ -61,19 +79,13 @@ class BatchRollout:
                     "actions_prev": action_prev[:, None, ...],
                     "rewards_prev": reward_prev[:, None, ...],
                 }
-                embedding = policy.embed(
-                    inputs, training=False, reset_state=reset_state
-                )
-                actions_batch = policy(embedding)
-                values_batch = policy.value(embedding)
-
+                actions_batch = policy(inputs, training=False, reset_state=reset_state)
                 action = actions_batch[:, 0].numpy()
                 action = action.astype(action_space.dtype)
 
-                value = values_batch[:, 0].numpy()
-                value = value.astype(np.float32)
-
                 observation_next, reward, done, info = self.env.step(action)
+
+                # TODO: compute intrinsic reward
 
                 observations[batch_start:batch_end, step] = observation
                 actions[batch_start:batch_end, step] = action
@@ -81,7 +93,6 @@ class BatchRollout:
                 observations_next[batch_start:batch_end, step] = observation_next
                 rewards[batch_start:batch_end, step] = reward
                 rewards_prev[batch_start:batch_end, step] = reward_prev
-                values_prev[batch_start:batch_end, step] = value
 
                 for i in range(batch_size):
                     # if the ith rollout is not done set the weight to 1
@@ -111,4 +122,8 @@ class BatchRollout:
             "rewards_prev": rewards_prev,
             "weights": weights,
         }
+
+        if render:
+            transitions["images"] = images
+
         return transitions
