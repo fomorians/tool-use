@@ -31,7 +31,7 @@ class BatchRollout:
             shape=(episodes, self.max_episode_steps) + observation_space.shape,
             dtype=observation_space.dtype,
         )
-        rewards = np.zeros(shape=(episodes, self.max_episode_steps, 2), dtype=np.float32)
+        rewards = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
         rewards_prev = np.zeros(
             shape=(episodes, self.max_episode_steps), dtype=np.float32
         )
@@ -65,7 +65,7 @@ class BatchRollout:
             action_prev = np.zeros(
                 shape=(batch_size,) + action_space.shape, dtype=action_space.dtype
             )
-            reward_prev = np.zeros(shape=(batch_size, 2), dtype=np.float32)
+            reward_prev = np.zeros(shape=(batch_size,), dtype=np.float32)
 
             for step in range(self.max_episode_steps):
                 if render:
