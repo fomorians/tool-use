@@ -33,7 +33,7 @@ class BatchRollout:
         )
         rewards = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
         rewards_prev = np.zeros(
-            shape=(episodes, self.max_episode_steps, 2), dtype=np.float32
+            shape=(episodes, self.max_episode_steps), dtype=np.float32
         )
         weights = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
 
@@ -65,7 +65,7 @@ class BatchRollout:
             action_prev = np.zeros(
                 shape=(batch_size,) + action_space.shape, dtype=action_space.dtype
             )
-            reward_prev = np.zeros(shape=(batch_size, 2), dtype=np.float32)
+            reward_prev = np.zeros(shape=(batch_size,), dtype=np.float32)
 
             for step in range(self.max_episode_steps):
                 if render:
@@ -83,9 +83,9 @@ class BatchRollout:
                 action = actions_batch[:, 0].numpy()
                 action = action.astype(action_space.dtype)
 
-                observation_next, reward, done, info = self.env.step(action)
-
                 # TODO: compute intrinsic reward
+
+                observation_next, reward, done, info = self.env.step(action)
 
                 observations[batch_start:batch_end, step] = observation
                 actions[batch_start:batch_end, step] = action

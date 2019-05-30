@@ -27,11 +27,11 @@ class ResidualBlock(tf.keras.layers.Layer):
         )
 
     def call(self, inputs):
-        hidden = pynr.nn.swish(inputs)
-        hidden = self.conv1(hidden)
+        hidden = self.conv1(inputs)
         hidden = pynr.nn.swish(hidden)
         hidden = self.conv2(hidden)
         hidden += inputs
+        hidden = pynr.nn.swish(hidden)
         return hidden
 
 
@@ -72,10 +72,8 @@ class Model(tf.keras.Model):
             kernel_initializer=kernel_initializer,
         )
 
-        self.downsample1 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
-        self.block1 = ResidualBlock(filters=64)
-        self.downsample2 = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
-        self.block2 = ResidualBlock(filters=64)
+        self.downsample = tf.keras.layers.MaxPool2D(pool_size=2, strides=2)
+        self.residual_block = ResidualBlock(filters=64)
 
         self.global_pool = tf.keras.layers.GlobalMaxPool2D()
 
@@ -133,7 +131,7 @@ class Model(tf.keras.Model):
             kernel_initializer=logits_initializer,
         )
 
-    def _embedding(
+    def embed(
         self, observations, actions_prev, rewards_prev, training=None, reset_state=None
     ):
         batch_size, steps, height, width, channels = observations.shape
@@ -144,15 +142,13 @@ class Model(tf.keras.Model):
         actions_prev = tf.reshape(
             actions_prev, [batch_size * steps, actions_prev.shape[-1]]
         )
-        rewards_prev = tf.reshape(rewards_prev, [batch_size * steps, 2])
+        rewards_prev = tf.reshape(rewards_prev, [batch_size * steps, 1])
 
         hidden = self.conv1(observations)
         hidden = self.conv2(hidden)
 
-        hidden = self.downsample1(hidden)
-        hidden = self.block1(hidden)
-        hidden = self.downsample2(hidden)
-        hidden = self.block2(hidden)
+        hidden = self.downsample(hidden)
+        hidden = self.residual_block(hidden)
 
         hidden = self.global_pool(hidden)
 
@@ -174,21 +170,21 @@ class Model(tf.keras.Model):
         hidden, self.hidden_state = self.rnn(hidden, initial_state=self.hidden_state)
         return hidden
 
-    def _forward_model(self, embedding, actions):
+    def forward_model(self, embedding, actions):
         move_embedding = self.move_embedding(actions[..., 0])
         grasp_embedding = self.grasp_embedding(actions[..., 1])
         hidden = tf.concat([embedding, move_embedding, grasp_embedding], axis=-1)
         embedding_next = embedding + self.dense_forward(hidden)
         return embedding_next
 
-    def _inverse_model(self, embedding, embedding_next):
+    def inverse_model(self, embedding, embedding_next):
         hidden = tf.concat([embedding, embedding_next], axis=-1)
         hidden = self.dense_inverse(hidden)
         move_pred = self.dense_inverse_move(hidden)
         grasp_pred = self.dense_inverse_grasp(hidden)
         return move_pred, grasp_pred
 
-    def _policy_dist(self, embedding):
+    def policy_dist(self, embedding):
         move_logits = self.move_logits(embedding)
         grasp_logits = self.grasp_logits(embedding)
 
@@ -197,28 +193,26 @@ class Model(tf.keras.Model):
         dist = pynr.distributions.MultiCategorical([move_dist, grasp_dist])
         return dist
 
-    # @tf.function
     def get_training_outputs(self, inputs, training=None, reset_state=None):
-        embedding = self._embedding(
+        embedding = self.embed(
             observations=inputs["observations"],
             actions_prev=inputs["actions_prev"],
             rewards_prev=inputs["rewards_prev"],
             training=training,
             reset_state=reset_state,
         )
-
-        embedding_next = self._embedding(
+        embedding_next = self.embed(
             observations=inputs["observations_next"],
             actions_prev=inputs["actions"],
             rewards_prev=inputs["rewards"],
             training=training,
             reset_state=reset_state,
         )
-        embedding_next_pred = self._forward_model(embedding, inputs["actions"])
-        move_pred, grasp_pred = self._inverse_model(embedding, embedding_next)
+        embedding_next_pred = self.forward_model(embedding, inputs["actions"])
+        move_pred, grasp_pred = self.inverse_model(embedding, embedding_next)
 
         values = self.values_logits(embedding)
-        dist = self._policy_dist(embedding)
+        dist = self.policy_dist(embedding)
 
         log_probs = dist.log_prob(inputs["actions"])
         entropy = dist.entropy()
@@ -236,12 +230,12 @@ class Model(tf.keras.Model):
         return outputs
 
     def call(self, inputs, training=None, reset_state=None):
-        embedding = self._embedding(
+        embedding = self.embed(
             observations=inputs["observations"],
             actions_prev=inputs["actions_prev"],
             rewards_prev=inputs["rewards_prev"],
             training=training,
             reset_state=reset_state,
         )
-        dist = self._policy_dist(embedding)
+        dist = self.policy_dist(embedding)
         return dist

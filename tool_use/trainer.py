@@ -210,7 +210,6 @@ class Trainer:
         )
         tf.summary.scalar("entropy", entropy_mean, step=self.optimizer.iterations)
 
-    # @tf.function
     def _train(self, transitions):
         extrinsic_rewards = transitions["rewards"]
 
@@ -236,7 +235,9 @@ class Trainer:
             ),
             axis=-1,
         )
-        episodic_intrinsic_rewards = tf.reduce_mean(intrinsic_rewards)
+        episodic_intrinsic_rewards = tf.reduce_mean(
+            tf.reduce_sum(intrinsic_rewards, axis=-1)
+        )
         tf.summary.scalar(
             "episodic_intrinsic_rewards/train",
             episodic_intrinsic_rewards,
