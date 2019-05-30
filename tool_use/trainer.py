@@ -70,20 +70,20 @@ class Trainer:
 
         # targets
         self.extrinsic_advantages_fn = pyrl.targets.GeneralizedAdvantages(
-            discount_factor=self.params.extrinsic_discount_factor,
+            discount_factor=self.params.discount_factor,
             lambda_factor=self.params.lambda_factor,
-            normalize=self.params.normalize_advantages,
+            normalize=False,
         )
         self.intrinsic_advantages_fn = pyrl.targets.GeneralizedAdvantages(
-            discount_factor=self.params.intrinsic_discount_factor,
+            discount_factor=self.params.discount_factor,
             lambda_factor=self.params.lambda_factor,
-            normalize=self.params.normalize_advantages,
+            normalize=False,
         )
         self.extrinsic_returns_fn = pyrl.targets.DiscountedRewards(
-            discount_factor=self.params.extrinsic_discount_factor
+            discount_factor=self.params.discount_factor
         )
         self.intrinsic_returns_fn = pyrl.targets.DiscountedRewards(
-            discount_factor=self.params.intrinsic_discount_factor
+            discount_factor=self.params.discount_factor
         )
 
     def _collect_transitions(self, env_name, episodes, policy, seed):
@@ -297,6 +297,22 @@ class Trainer:
         )
 
         advantages = extrinsic_advantages + intrinsic_advantages
+
+        if self.params.normalize_advantages:
+            advantages_mean, advantages_variance = tf.nn.weighted_moments(
+                advantages,
+                axes=[0, 1],
+                frequency_weights=transitions["weights"],
+                keepdims=True,
+            )
+            advantages_std = tf.sqrt(advantages_variance)
+            advantages = pynr.math.normalize(
+                advantages,
+                loc=advantages_mean,
+                scale=advantages_std,
+                sample_weight=transitions["weights"],
+            )
+
         returns = tf.stack([extrinsic_returns, intrinsic_returns], axis=-1)
 
         # summaries
