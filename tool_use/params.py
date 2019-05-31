@@ -25,14 +25,14 @@ class HyperParams:
     # losses
     value_coef = attr.ib(default=1e-3)
     entropy_coef = attr.ib(default=1e-4)
-    forward_coef = attr.ib(default=1.0)
-    inverse_coef = attr.ib(default=1.0)
-    intrinsic_coef = attr.ib(default=1.0)
+    forward_coef = attr.ib(default=0.2)
+    inverse_coef = attr.ib(default=0.8)
+    intrinsic_coef = attr.ib(default=10.0)
     l2_coef = attr.ib(default=0.0)
 
     # optimization
     learning_rate = attr.ib(default=1e-3)
-    grad_clipping = attr.ib(default=10.0)
+    grad_clipping = attr.ib(default=1.0)
 
     # PPO
     epsilon_clipping = attr.ib(default=0.2)
