@@ -27,10 +27,10 @@ class ResidualBlock(tf.keras.layers.Layer):
         )
 
     def call(self, inputs):
-        hidden = self.conv1(inputs)
+        hidden = pynr.nn.swish(inputs)
+        hidden = self.conv1(hidden)
         hidden = pynr.nn.swish(hidden)
         hidden = self.conv2(hidden)
-        hidden = pynr.nn.swish(hidden)
         hidden += inputs
         return hidden
 

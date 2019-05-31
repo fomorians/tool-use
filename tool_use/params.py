@@ -25,8 +25,8 @@ class HyperParams:
     # losses
     value_coef = attr.ib(default=1e-2)
     entropy_coef = attr.ib(default=1e-4)
-    forward_coef = attr.ib(default=0.2)
-    inverse_coef = attr.ib(default=0.8)
+    forward_coef = attr.ib(default=1.0)
+    inverse_coef = attr.ib(default=1.0)
     intrinsic_coef = attr.ib(default=10.0)
     l2_coef = attr.ib(default=0.0)
 
