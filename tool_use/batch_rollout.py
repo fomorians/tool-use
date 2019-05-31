@@ -83,8 +83,6 @@ class BatchRollout:
                 action = actions_batch[:, 0].numpy()
                 action = action.astype(action_space.dtype)
 
-                # TODO: compute intrinsic reward
-
                 observation_next, reward, done, info = self.env.step(action)
 
                 observations[batch_start:batch_end, step] = observation
