@@ -35,13 +35,6 @@ class ResidualBlock(tf.keras.layers.Layer):
         return hidden
 
 
-def layer_norm_tanh(layer_norm):
-    def activation(x):
-        return tf.math.tanh(layer_norm(x))
-
-    return activation
-
-
 class Model(tf.keras.Model):
     def __init__(self, observation_space, action_space):
         super(Model, self).__init__()
@@ -93,13 +86,8 @@ class Model(tf.keras.Model):
             units=64, activation=pynr.nn.swish, kernel_initializer=kernel_initializer
         )
 
-        # self.layer_norm = tf.keras.layers.LayerNormalization()
-
         self.rnn = tf.keras.layers.GRU(
-            units=64,
-            return_sequences=True,
-            return_state=True,
-            # activation=layer_norm_tanh(self.layer_norm),
+            units=64, return_sequences=True, return_state=True
         )
 
         self.move_logits = tf.keras.layers.Dense(

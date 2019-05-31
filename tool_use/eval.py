@@ -28,7 +28,7 @@ def main():
     success_image_dir = os.path.join(image_dir, "success")
     failure_image_dir = os.path.join(image_dir, "failure")
 
-    # make job directory
+    # make image directories
     os.makedirs(success_image_dir, exist_ok=True)
     os.makedirs(failure_image_dir, exist_ok=True)
 
