@@ -69,7 +69,9 @@ class BatchRollout:
 
             for step in range(self.max_episode_steps):
                 if render:
-                    images[:, step] = self.env.render(mode="rgb_array")
+                    images[batch_start:batch_end, step] = self.env.render(
+                        mode="rgb_array"
+                    )
 
                 reset_state = step == 0
 

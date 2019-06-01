@@ -11,7 +11,6 @@ import pyoneer.rl as pyrl
 from tool_use.env import create_env, collect_transitions
 from tool_use.model import Model
 from tool_use.params import HyperParams
-from tool_use.batch_rollout import BatchRollout
 
 
 def save_images(job_dir, env_name, transitions):
