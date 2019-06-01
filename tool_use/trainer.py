@@ -4,10 +4,9 @@ import tensorflow as tf
 import pyoneer as pynr
 import pyoneer.rl as pyrl
 
-from tool_use.env import create_env
+from tool_use.env import create_env, collect_transitions
 from tool_use.data import create_dataset
 from tool_use.model import Model
-from tool_use.batch_rollout import BatchRollout
 
 from tensorflow.python.keras.utils import losses_utils
 
@@ -77,17 +76,6 @@ class Trainer:
         self.returns_fn = pyrl.targets.DiscountedRewards(
             discount_factor=self.params.discount_factor
         )
-
-    def _collect_transitions(self, env_name, episodes, policy, seed):
-        with tf.device("/cpu:0"):
-            env = pyrl.wrappers.Batch(
-                lambda batch_id: create_env(env_name),
-                batch_size=self.params.env_batch_size,
-            )
-            env.seed(seed)
-            rollout = BatchRollout(env, self.params.max_episode_steps)
-            transitions = rollout(policy, episodes)
-        return transitions
 
     def _batch_train(self, batch):
         with tf.GradientTape() as tape:
@@ -328,11 +316,12 @@ class Trainer:
             self._batch_train(batch)
 
     def _eval(self, env_name):
-        transitions = self._collect_transitions(
+        transitions = collect_transitions(
             env_name=env_name,
             episodes=self.params.episodes_eval,
             policy=self.inference_policy,
             seed=self.params.eval_seed(env_name),
+            params=self.params,
         )
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
@@ -354,11 +343,12 @@ class Trainer:
 
             # training
             with pynr.debugging.Stopwatch() as train_stopwatch:
-                transitions = self._collect_transitions(
+                transitions = collect_transitions(
                     env_name=self.params.env_name,
                     episodes=self.params.episodes_train,
                     policy=self.exploration_policy,
                     seed=self.params.train_seed(it),
+                    params=self.params,
                 )
                 self._train(transitions)
 
