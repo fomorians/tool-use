@@ -332,7 +332,7 @@ class Trainer:
             env_name=env_name,
             episodes=self.params.episodes_eval,
             policy=self.inference_policy,
-            seed=self.params.seed,
+            seed=self.params.eval_seed(env_name),
         )
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
@@ -358,7 +358,7 @@ class Trainer:
                     env_name=self.params.env_name,
                     episodes=self.params.episodes_train,
                     policy=self.exploration_policy,
-                    seed=self.params.seed + it,
+                    seed=self.params.train_seed(it),
                 )
                 self._train(transitions)
 
@@ -372,16 +372,8 @@ class Trainer:
 
             # evaluation
             with pynr.debugging.Stopwatch() as eval_stopwatch:
-                self._eval(self.params.env_name)
-
-                if self.params.env_name != "PerceptualTrapTube-v0":
-                    self._eval("PerceptualTrapTube-v0")
-
-                if self.params.env_name != "StructuralTrapTube-v0":
-                    self._eval("StructuralTrapTube-v0")
-
-                if self.params.env_name != "SymbolicTrapTube-v0":
-                    self._eval("SymbolicTrapTube-v0")
+                for env_name in self.params.eval_env_names:
+                    self._eval(env_name)
 
             tf.print("time/eval", eval_stopwatch.duration)
             tf.summary.scalar(
