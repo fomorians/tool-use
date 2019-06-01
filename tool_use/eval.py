@@ -58,7 +58,7 @@ def main():
     tf.random.set_seed(params.seed)
 
     # models
-    env = create_env("TrapTube-v0")
+    env = create_env(params.env_name)
     model = Model(
         observation_space=env.observation_space, action_space=env.action_space
     )
