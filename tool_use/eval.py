@@ -44,6 +44,9 @@ def save_images(job_dir, env_name, transitions):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--job-dir", required=True)
+    parser.add_argument("--checkpoint", default=-1, type=int)
+    parser.add_argument("--env-name")
+    parser.add_argument("--save-images", action="store_true")
     args = parser.parse_args()
     print(args)
 
@@ -71,9 +74,12 @@ def main():
     checkpoint_manager = tf.train.CheckpointManager(
         checkpoint, directory=args.job_dir, max_to_keep=None
     )
-    checkpoint.restore(checkpoint_manager.latest_checkpoint).expect_partial()
+    checkpoint.restore(checkpoint_manager.checkpoints[args.checkpoint]).expect_partial()
 
     for env_name in params.eval_env_names:
+        if args.env_name is not None and env_name != args.env_name:
+            continue
+
         seed = params.eval_seed(env_name)
 
         transitions = collect_transitions(
@@ -88,7 +94,8 @@ def main():
         episodic_rewards = np.mean(np.sum(transitions["rewards"], axis=-1))
         print("episodic_rewards/eval/{}".format(env_name), episodic_rewards)
 
-        save_images(args.job_dir, env_name, transitions)
+        if args.save_images:
+            save_images(args.job_dir, env_name, transitions)
 
 
 if __name__ == "__main__":
