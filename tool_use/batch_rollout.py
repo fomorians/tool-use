@@ -93,14 +93,9 @@ class BatchRollout:
                 observations_next[batch_start:batch_end, step] = observation_next
                 rewards[batch_start:batch_end, step] = reward
                 rewards_prev[batch_start:batch_end, step] = reward_prev
+                weights[batch_start:batch_end, step] = np.where(episode_done, 0.0, 1.0)
 
-                for i in range(batch_size):
-                    # if the ith rollout is not done set the weight to 1
-                    if not episode_done[i]:
-                        weights[batch_start + i, step] = 1.0
-
-                    # if the ith rollout is done mark it as done
-                    episode_done[i] = episode_done[i] or done[i]
+                episode_done = episode_done | done
 
                 # end the rollout if all episodes are done
                 if np.all(episode_done):
