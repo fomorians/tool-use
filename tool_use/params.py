@@ -12,7 +12,7 @@ class HyperParams:
     max_episode_steps = attr.ib(default=50)
 
     # training
-    train_iters = attr.ib(default=200)
+    train_iters = attr.ib(default=500)
     episodes_train = attr.ib(default=1024)
     episodes_eval = attr.ib(default=128)
     epochs = attr.ib(default=10)
@@ -42,10 +42,14 @@ class HyperParams:
     @property
     def eval_env_names(self):
         return [
+            "TrapTube-v0",
             "PerceptualTrapTube-v0",
             "StructuralTrapTube-v0",
             "SymbolicTrapTube-v0",
-            self.env_name,
+            "PerceptualStructuralTrapTube-v0",
+            "PerceptualSymbolicTrapTube-v0",
+            "StructuralSymbolicTrapTube-v0",
+            "PerceptualStructuralSymbolicTrapTube-v0",
         ]
 
     def train_seed(self, it):

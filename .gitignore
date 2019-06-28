@@ -1,2 +1,9 @@
 .ipynb_checkpoints/
 .DS_Store
+.idea/
+analysis/
+dist/
+jobs/
+tool_use.egg-info/
+tool_use/__pycache__/
+MANIFEST
