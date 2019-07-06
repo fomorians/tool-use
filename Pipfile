@@ -6,10 +6,10 @@ name = "pypi"
 [packages]
 attrs = "*"
 gym = "*"
-pyoneer = {editable = true,path = "/Users/fomoro/Documents/pyoneer"}
-pycolab = {editable = true,path = "/Users/fomoro/Documents/pycolab"}
-gym-pycolab = {editable = true,path = "/Users/fomoro/Documents/gym_pycolab"}
-gym-tool-use = {editable = true,path = "/Users/fomoro/Documents/gym_tool_use"}
+fomoro-pyoneer = "*"
+pycolab = "*"
+gym-pycolab = "*"
+gym-tool-use = "*"
 tfp-nightly = "*"
 tf-nightly-2-0-preview = "*"
 
