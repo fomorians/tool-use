@@ -6,12 +6,12 @@ name = "pypi"
 [packages]
 attrs = "*"
 gym = "*"
-fomoro-pyoneer = "*"
+fomoro-pyoneer = "0.2.0"
 pycolab = "*"
 gym-pycolab = "*"
 gym-tool-use = "*"
+tensorflow = "==2.0.0-beta1"
 tfp-nightly = "*"
-tf-nightly-2-0-preview = "*"
 
 [dev-packages]
 jupyterlab = "*"
