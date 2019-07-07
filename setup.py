@@ -10,6 +10,7 @@ REQUIRED_PACKAGES = [
     "gym_tool_use==1.0.0",
     "tensorflow-gpu==2.0.0b1",
     "tensorflow-probability==0.7.0",
+    "imageio",
 ]
 
 setup(
