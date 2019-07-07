@@ -47,6 +47,7 @@ def main():
     parser.add_argument("--checkpoint", default=-1, type=int)
     parser.add_argument("--env-name")
     parser.add_argument("--save-images", action="store_true")
+    parser.add_argument("--l2rl", action="store_true")
     args = parser.parse_args()
     print(args)
 
@@ -63,7 +64,9 @@ def main():
     # models
     env = create_env(params.env_name)
     model = Model(
-        observation_space=env.observation_space, action_space=env.action_space
+        observation_space=env.observation_space,
+        action_space=env.action_space,
+        l2rl=args.l2rl,
     )
 
     # strategies

@@ -12,8 +12,9 @@ from tensorflow.python.keras.utils import losses_utils
 
 
 class Trainer:
-    def __init__(self, job_dir, params):
-        self.job_dir = job_dir
+    def __init__(self, args, params):
+        self.job_dir = args.job_dir
+        self.intrinsic_reward = args.intrinsic_reward
         self.params = params
 
         # optimization
@@ -22,7 +23,9 @@ class Trainer:
         # models
         env = create_env(self.params.env_name)
         self.model = Model(
-            observation_space=env.observation_space, action_space=env.action_space
+            observation_space=env.observation_space,
+            action_space=env.action_space,
+            l2rl=args.l2rl,
         )
 
         # policies
@@ -48,8 +51,7 @@ class Trainer:
             self.checkpoint, directory=self.job_dir, max_to_keep=None
         )
         if self.checkpoint_manager.latest_checkpoint:
-            status = self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint)
-            status.assert_consumed()
+            self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint).expect_partial()
 
         # summaries
         self.summary_writer = tf.summary.create_file_writer(
@@ -76,6 +78,34 @@ class Trainer:
         self.returns_fn = pyrl.targets.DiscountedRewards(
             discount_factor=self.params.discount_factor
         )
+
+    def _compute_loss(
+            self,
+            policy_loss,
+            value_loss,
+            entropy_loss,
+            intrinsic_loss,
+            regularization_loss,
+    ):
+        if self.intrinsic_reward:
+            return tf.add_n(
+                [
+                    policy_loss,
+                    value_loss,
+                    entropy_loss,
+                    intrinsic_loss,
+                    regularization_loss,
+                ]
+            )
+        else:
+            return tf.add_n(
+                [
+                    policy_loss,
+                    value_loss,
+                    entropy_loss,
+                    regularization_loss,
+                ]
+            )
 
     def _batch_train(self, batch):
         with tf.GradientTape() as tape:
@@ -135,14 +165,12 @@ class Trainer:
                     for tvar in self.model.trainable_variables
                 ]
             )
-            loss = tf.add_n(
-                [
-                    policy_loss,
-                    value_loss,
-                    entropy_loss,
-                    intrinsic_loss,
-                    regularization_loss,
-                ]
+            loss = self._compute_loss(
+                policy_loss=policy_loss,
+                value_loss=value_loss,
+                entropy_loss=entropy_loss,
+                intrinsic_loss=intrinsic_loss,
+                regularization_loss=regularization_loss,
             )
 
         # compute gradients

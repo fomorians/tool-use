@@ -1,3 +1,10 @@
 .ipynb_checkpoints/
 .DS_Store
+.idea/
+analysis/
+dist/
+jobs/
+/*.egg-info/
+__pycache__/
+MANIFEST
 Pipfile.lock
