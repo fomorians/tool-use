@@ -3,6 +3,7 @@ ENV_NAME="$1"
 SEED="$2"
 DESC="$3"
 
+# shift position parameters to the left 3 to pass as argparse arguments to tool_use.main
 shift 3
 
 NOW=$(date +"%Y%m%d_%H%M%S")

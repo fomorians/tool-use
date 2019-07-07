@@ -4,14 +4,14 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-attrs = "*"
-gym = "*"
-pyoneer = {editable = true,path = "/Users/fomoro/Documents/pyoneer"}
-pycolab = {editable = true,path = "/Users/fomoro/Documents/pycolab"}
-gym-pycolab = {editable = true,path = "/Users/fomoro/Documents/gym_pycolab"}
-gym-tool-use = {editable = true,path = "/Users/fomoro/Documents/gym_tool_use"}
-tfp-nightly = "*"
-tf-nightly-2-0-preview = "*"
+attrs = "==19.1.0"
+gym = "==0.12.5"
+fomoro-pyoneer = "==0.2.0"
+pycolab = "==1.2"
+gym-pycolab = "==1.0.0"
+gym-tool-use = "==1.0.0"
+tensorflow = "==2.0.0b1"
+tensorflow-probability = "==0.7.0"
 
 [dev-packages]
 jupyterlab = "*"

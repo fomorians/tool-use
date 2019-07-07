@@ -2,14 +2,14 @@ from setuptools import find_packages
 from setuptools import setup
 
 REQUIRED_PACKAGES = [
-    "gym",
-    "attrs",
-    "pyoneer",
-    "pycolab",
-    "gym_pycolab",
-    "gym_tool_use",
-    "tf-nightly-gpu-2-0-preview",
-    "tfp-nightly",
+    "gym==0.12.5",
+    "attrs==19.1.0",
+    "fomoro-pyoneer==0.2.0",
+    "pycolab==1.2",
+    "gym_pycolab==1.0.0",
+    "gym_tool_use==1.0.0",
+    "tensorflow-gpu==2.0.0b1",
+    "tensorflow-probability==0.7.0",
 ]
 
 setup(
