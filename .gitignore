@@ -7,3 +7,4 @@ jobs/
 /*.egg-info/
 __pycache__/
 MANIFEST
+Pipfile.lock
