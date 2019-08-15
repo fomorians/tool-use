@@ -80,11 +80,15 @@ class Model(tf.keras.Model):
             input_dim=action_space.nvec[1], output_dim=8
         )
         self.reward_embedding = tf.keras.layers.Dense(
-            units=8, activation=pynr.activations.swish, kernel_initializer=kernel_initializer
+            units=8,
+            activation=pynr.activations.swish,
+            kernel_initializer=kernel_initializer,
         )
 
         self.dense_hidden = tf.keras.layers.Dense(
-            units=64, activation=pynr.activations.swish, kernel_initializer=kernel_initializer
+            units=64,
+            activation=pynr.activations.swish,
+            kernel_initializer=kernel_initializer,
         )
 
         self.rnn = tf.keras.layers.GRU(
@@ -109,7 +113,9 @@ class Model(tf.keras.Model):
             units=64, activation=None, kernel_initializer=logits_initializer
         )
         self.dense_inverse = tf.keras.layers.Dense(
-            units=64, activation=pynr.activations.swish, kernel_initializer=kernel_initializer
+            units=64,
+            activation=pynr.activations.swish,
+            kernel_initializer=kernel_initializer,
         )
         self.dense_inverse_move = tf.keras.layers.Dense(
             units=action_space.nvec[0],
@@ -155,14 +161,13 @@ class Model(tf.keras.Model):
             )
 
         hidden = self.dense_hidden(hidden)
-
         hidden = tf.reshape(hidden, [batch_size, steps, self.dense_hidden.units])
 
         if self.hidden_state is None or reset_state:
             self.hidden_state = tf.tile(self.initial_hidden_state, [batch_size, 1])
 
         hidden, self.hidden_state = self.rnn(hidden, initial_state=self.hidden_state)
-        return hidden
+        return hidden, self.hidden_state
 
     def forward_model(self, embedding, actions):
         move_embedding = self.move_embedding(actions[..., 0])
@@ -226,7 +231,7 @@ class Model(tf.keras.Model):
         return outputs
 
     def call(self, inputs, training=None, reset_state=None):
-        embedding = self.embed(
+        embedding, hidden_state = self.embed(
             observations=inputs["observations"],
             actions_prev=inputs["actions_prev"],
             rewards_prev=inputs["rewards_prev"],

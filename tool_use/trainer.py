@@ -51,7 +51,9 @@ class Trainer:
             self.checkpoint, directory=self.job_dir, max_to_keep=None
         )
         if self.checkpoint_manager.latest_checkpoint:
-            self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint).expect_partial()
+            self.checkpoint.restore(
+                self.checkpoint_manager.latest_checkpoint
+            ).expect_partial()
 
         # summaries
         self.summary_writer = tf.summary.create_file_writer(
@@ -80,12 +82,7 @@ class Trainer:
         )
 
     def _compute_loss(
-            self,
-            policy_loss,
-            value_loss,
-            entropy_loss,
-            intrinsic_loss,
-            regularization_loss,
+        self, policy_loss, value_loss, entropy_loss, intrinsic_loss, regularization_loss
     ):
         if self.intrinsic_reward:
             return tf.add_n(
@@ -99,12 +96,7 @@ class Trainer:
             )
         else:
             return tf.add_n(
-                [
-                    policy_loss,
-                    value_loss,
-                    entropy_loss,
-                    regularization_loss,
-                ]
+                [policy_loss, value_loss, entropy_loss, regularization_loss]
             )
 
     def _batch_train(self, batch):

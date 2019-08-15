@@ -8,39 +8,9 @@ import tensorflow as tf
 
 import pyoneer.rl as pyrl
 
-from tool_use.env import create_env, collect_transitions
 from tool_use.model import Model
 from tool_use.params import HyperParams
-
-
-def save_images(job_dir, env_name, transitions):
-    timestamp = int(time.time())
-    image_dir = os.path.join(job_dir, "results", env_name, str(timestamp))
-    success_image_dir = os.path.join(image_dir, "success")
-    failure_image_dir = os.path.join(image_dir, "failure")
-
-    os.makedirs(success_image_dir, exist_ok=True)
-    os.makedirs(failure_image_dir, exist_ok=True)
-
-    print(success_image_dir)
-
-    for episode, episode_images in enumerate(transitions["images"]):
-        rewards = np.sum(transitions["rewards"][episode], axis=-1)
-
-        if rewards > 0:
-            image_path = os.path.join(success_image_dir, "{}.gif".format(episode))
-        else:
-            image_path = os.path.join(failure_image_dir, "{}.gif".format(episode))
-
-        episode_weights = transitions["weights"][episode]
-        max_episode_steps = int(episode_weights.sum())
-        imageio.mimwrite(
-            image_path,
-            episode_images[: max_episode_steps + 1],
-            loop=1,
-            fps=3,
-            subrectangles=True,
-        )
+from tool_use.env import create_env, collect_transitions
 
 
 def main():
@@ -48,7 +18,6 @@ def main():
     parser.add_argument("--job-dir", required=True)
     parser.add_argument("--checkpoint", default=-1, type=int)
     parser.add_argument("--env-name")
-    parser.add_argument("--save-images", action="store_true")
     parser.add_argument("--l2rl", action="store_true")
     args = parser.parse_args()
     print(args)
@@ -56,6 +25,7 @@ def main():
     # params
     params_path = os.path.join(args.job_dir, "params.json")
     params = HyperParams.load(params_path)
+    save_dir = args.job_dir.replace("gs://tool-use-jobs", "jobs")
     print(params)
 
     # seed
@@ -94,13 +64,19 @@ def main():
             seed=seed,
             params=params,
             render=True,
+            return_hidden_states=True,
         )
+
+        path = os.path.join(save_dir, "transition_data", env_name)
+        os.makedirs(path, exist_ok=True)
+
+        for i in range(params.episodes_eval):
+            transition = {key: transitions[key][i] for key in transitions}
+            file = os.path.join(path, f"{i}.npz")
+            np.savez(file, **transition)
 
         episodic_rewards = np.mean(np.sum(transitions["rewards"], axis=-1))
         print("episodic_rewards/eval/{}".format(env_name), episodic_rewards)
-
-        if args.save_images:
-            save_images(args.job_dir, env_name, transitions)
 
 
 if __name__ == "__main__":

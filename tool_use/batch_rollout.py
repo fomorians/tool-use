@@ -6,7 +6,7 @@ class BatchRollout:
         self.env = env
         self.max_episode_steps = max_episode_steps
 
-    def __call__(self, policy, episodes, render=False):
+    def __call__(self, policy, episodes, render=False, return_hidden_states=True):
         assert episodes % len(self.env) == 0
 
         observation_space = self.env.observation_space
@@ -36,6 +36,11 @@ class BatchRollout:
             shape=(episodes, self.max_episode_steps), dtype=np.float32
         )
         weights = np.zeros(shape=(episodes, self.max_episode_steps), dtype=np.float32)
+
+        if return_hidden_states:
+            hidden_states = np.zeros(
+                shape=(episodes, self.max_episode_steps, policy.policy.rnn.units), dtype=np.float32
+            )
 
         if render:
             height, width, _ = observation_space.shape
@@ -81,7 +86,14 @@ class BatchRollout:
                     "actions_prev": action_prev[:, None, ...],
                     "rewards_prev": reward_prev[:, None, ...],
                 }
-                actions_batch = policy(inputs, training=False, reset_state=reset_state)
+                actions_batch = policy(
+                    inputs,
+                    training=False,
+                    reset_state=reset_state,
+                )
+                if return_hidden_states:
+                    hidden_state = policy.policy.hidden_state
+                
                 action = actions_batch[:, 0].numpy()
                 action = action.astype(action_space.dtype)
 
@@ -94,6 +106,9 @@ class BatchRollout:
                 rewards[batch_start:batch_end, step] = reward
                 rewards_prev[batch_start:batch_end, step] = reward_prev
                 weights[batch_start:batch_end, step] = np.where(episode_done, 0.0, 1.0)
+
+                if return_hidden_states:
+                    hidden_states[batch_start:batch_end, step] = hidden_state
 
                 episode_done = episode_done | done
 
@@ -108,15 +123,27 @@ class BatchRollout:
         # ensure rewards are masked
         rewards *= weights
 
-        transitions = {
-            "observations": observations,
-            "actions": actions,
-            "actions_prev": actions_prev,
-            "observations_next": observations_next,
-            "rewards": rewards,
-            "rewards_prev": rewards_prev,
-            "weights": weights,
-        }
+        if return_hidden_states:
+            transitions = {
+                "observations": observations,
+                "actions": actions,
+                "actions_prev": actions_prev,
+                "observations_next": observations_next,
+                "rewards": rewards,
+                "rewards_prev": rewards_prev,
+                "weights": weights,
+                "hidden_states": hidden_states,
+            }
+        else:
+            transitions = {
+                "observations": observations,
+                "actions": actions,
+                "actions_prev": actions_prev,
+                "observations_next": observations_next,
+                "rewards": rewards,
+                "rewards_prev": rewards_prev,
+                "weights": weights,
+            }
 
         if render:
             transitions["images"] = images

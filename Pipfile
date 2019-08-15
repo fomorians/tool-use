@@ -12,7 +12,6 @@ gym-pycolab = "*"
 gym-tool-use = "*"
 tensorflow = "==2.0.0-beta1"
 tfp-nightly = "*"
-imageio = "*"
 
 [dev-packages]
 jupyterlab = "*"
