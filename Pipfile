@@ -6,7 +6,7 @@ name = "pypi"
 [packages]
 attrs = "*"
 gym = "*"
-fomoro-pyoneer = "0.2.0"
+fomoro-pyoneer = "==0.2.0"
 pycolab = "*"
 gym-pycolab = "*"
 gym-tool-use = "*"
