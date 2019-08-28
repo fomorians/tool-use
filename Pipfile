@@ -6,12 +6,12 @@ name = "pypi"
 [packages]
 attrs = "*"
 gym = "*"
-fomoro-pyoneer = "==0.2.0"
+fomoro-pyoneer = {editable = true,path = "/Users/fomoro/Documents/pyoneer"}
 pycolab = "*"
 gym-pycolab = "*"
-gym-tool-use = "*"
+gym-tool-use = {editable = true,path = "/Users/fomoro/Documents/gym_tool_use"}
 tensorflow = "==2.0.0-beta1"
-tfp-nightly = "*"
+tensorflow-probability = "*"
 
 [dev-packages]
 jupyterlab = "*"

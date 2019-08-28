@@ -36,12 +36,12 @@ class ResidualBlock(tf.keras.layers.Layer):
 
 
 class Model(tf.keras.Model):
-    def __init__(self, observation_space, action_space, l2rl=True):
+    def __init__(self, observation_space, action_space, use_l2rl=True):
         super(Model, self).__init__()
 
         self.observation_space = observation_space
         self.action_space = action_space
-        self.l2rl = l2rl
+        self.use_l2rl = use_l2rl
 
         kernel_initializer = tf.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.initializers.VarianceScaling(scale=1.0)
@@ -80,11 +80,15 @@ class Model(tf.keras.Model):
             input_dim=action_space.nvec[1], output_dim=8
         )
         self.reward_embedding = tf.keras.layers.Dense(
-            units=8, activation=pynr.activations.swish, kernel_initializer=kernel_initializer
+            units=8,
+            activation=pynr.activations.swish,
+            kernel_initializer=kernel_initializer,
         )
 
         self.dense_hidden = tf.keras.layers.Dense(
-            units=64, activation=pynr.activations.swish, kernel_initializer=kernel_initializer
+            units=64,
+            activation=pynr.activations.swish,
+            kernel_initializer=kernel_initializer,
         )
 
         self.rnn = tf.keras.layers.GRU(
@@ -109,7 +113,9 @@ class Model(tf.keras.Model):
             units=64, activation=None, kernel_initializer=logits_initializer
         )
         self.dense_inverse = tf.keras.layers.Dense(
-            units=64, activation=pynr.activations.swish, kernel_initializer=kernel_initializer
+            units=64,
+            activation=pynr.activations.swish,
+            kernel_initializer=kernel_initializer,
         )
         self.dense_inverse_move = tf.keras.layers.Dense(
             units=action_space.nvec[0],
@@ -145,7 +151,7 @@ class Model(tf.keras.Model):
 
         hidden = self.global_pool(hidden)
 
-        if self.l2rl:
+        if self.use_l2rl:
             move_embedding = self.move_embedding(actions_prev[..., 0])
             grasp_embedding = self.grasp_embedding(actions_prev[..., 1])
             reward_embedding = self.reward_embedding(rewards_prev)

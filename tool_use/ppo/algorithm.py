@@ -6,26 +6,32 @@ import pyoneer.rl as pyrl
 
 from tool_use.env import create_env, collect_transitions
 from tool_use.data import create_dataset
-from tool_use.model import Model
+from tool_use.seeds import Seeds
+from tool_use.ppo.model import Model
 
-from tensorflow.python.keras.utils import losses_utils
 
-
-class Trainer:
-    def __init__(self, args, params):
-        self.job_dir = args.job_dir
-        self.intrinsic_reward = args.intrinsic_reward
+class Algorithm:
+    def __init__(self, job_dir, params, eval_env_names):
+        self.job_dir = job_dir
         self.params = params
+        self.eval_env_names = eval_env_names
+
+        # seed manager
+        self.seeds = Seeds(
+            base_seed=params.seed,
+            env_batch_size=params.env_batch_size,
+            eval_env_names=eval_env_names,
+        )
 
         # optimization
         self.optimizer = tf.optimizers.Adam(learning_rate=self.params.learning_rate)
 
         # models
-        env = create_env(self.params.env_name)
+        env = create_env(self.params.env_name)()
         self.model = Model(
             observation_space=env.observation_space,
             action_space=env.action_space,
-            l2rl=args.l2rl,
+            use_l2rl=params.use_l2rl,
         )
 
         # policies
@@ -33,10 +39,10 @@ class Trainer:
         self.inference_policy = pyrl.strategies.Mode(self.model)
 
         # normalization
-        self.extrinsic_rewards_moments = pynr.nn.ExponentialMovingMoments(
+        self.extrinsic_rewards_moments = pynr.moments.ExponentialMovingMoments(
             shape=(), rate=self.params.reward_decay
         )
-        self.intrinsic_rewards_moments = pynr.nn.ExponentialMovingMoments(
+        self.intrinsic_rewards_moments = pynr.moments.ExponentialMovingMoments(
             shape=(), rate=self.params.reward_decay
         )
 
@@ -51,7 +57,9 @@ class Trainer:
             self.checkpoint, directory=self.job_dir, max_to_keep=None
         )
         if self.checkpoint_manager.latest_checkpoint:
-            self.checkpoint.restore(self.checkpoint_manager.latest_checkpoint).expect_partial()
+            self.checkpoint.restore(
+                self.checkpoint_manager.latest_checkpoint
+            ).expect_partial()
 
         # summaries
         self.summary_writer = tf.summary.create_file_writer(
@@ -75,19 +83,14 @@ class Trainer:
             lambda_factor=self.params.lambda_factor,
             normalize=self.params.normalize_advantages,
         )
-        self.returns_fn = pyrl.targets.DiscountedRewards(
+        self.returns_fn = pyrl.targets.DiscountedReturns(
             discount_factor=self.params.discount_factor
         )
 
     def _compute_loss(
-            self,
-            policy_loss,
-            value_loss,
-            entropy_loss,
-            intrinsic_loss,
-            regularization_loss,
+        self, policy_loss, value_loss, entropy_loss, intrinsic_loss, regularization_loss
     ):
-        if self.intrinsic_reward:
+        if self.params.use_icm:
             return tf.add_n(
                 [
                     policy_loss,
@@ -99,12 +102,7 @@ class Trainer:
             )
         else:
             return tf.add_n(
-                [
-                    policy_loss,
-                    value_loss,
-                    entropy_loss,
-                    regularization_loss,
-                ]
+                [policy_loss, value_loss, entropy_loss, regularization_loss]
             )
 
     def _batch_train(self, batch):
@@ -185,7 +183,7 @@ class Trainer:
         self.optimizer.apply_gradients(grads_and_vars)
 
         # summaries
-        entropy_mean = losses_utils.compute_weighted_loss(
+        entropy_mean = pynr.losses.compute_weighted_loss(
             losses=entropy, sample_weight=batch["weights"]
         )
         gradient_norm = tf.linalg.global_norm(grads)
@@ -347,9 +345,9 @@ class Trainer:
         transitions = collect_transitions(
             env_name=env_name,
             episodes=self.params.episodes_eval,
+            batch_size=self.params.env_batch_size,
             policy=self.inference_policy,
-            seed=self.params.eval_seed(env_name),
-            params=self.params,
+            seed=self.seeds.eval_seed(env_name),
         )
         episodic_rewards = tf.reduce_mean(
             tf.reduce_sum(transitions["rewards"], axis=-1)
@@ -374,9 +372,9 @@ class Trainer:
                 transitions = collect_transitions(
                     env_name=self.params.env_name,
                     episodes=self.params.episodes_train,
+                    batch_size=self.params.env_batch_size,
                     policy=self.exploration_policy,
-                    seed=self.params.train_seed(it),
-                    params=self.params,
+                    seed=self.seeds.train_seed(it),
                 )
                 self._train(transitions)
 
@@ -390,7 +388,7 @@ class Trainer:
 
             # evaluation
             with pynr.debugging.Stopwatch() as eval_stopwatch:
-                for env_name in self.params.eval_env_names:
+                for env_name in self.eval_env_names:
                     self._eval(env_name)
 
             tf.print("time/eval", eval_stopwatch.duration)
