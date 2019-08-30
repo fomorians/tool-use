@@ -1,6 +1,6 @@
 class Seeds:
     """
-    Simple seed management. Ensures that no training iteration uses the
+    Simple seed manager. Ensures that no training iteration uses the
     same environment seed and that each evaluation uses the same
     environment seed.
 
@@ -29,4 +29,6 @@ class Seeds:
         # 0 + 1 * 128 = 128-255
         # 0 + 2 * 128 = 256-383
         # 0 + 3 * 128 = 384-511
-        return self.base_seed + self.eval_env_names.index(env_name) * self.env_batch_size
+        return (
+            self.base_seed + self.eval_env_names.index(env_name) * self.env_batch_size
+        )

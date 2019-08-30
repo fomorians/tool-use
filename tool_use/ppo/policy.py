@@ -2,44 +2,13 @@ import pyoneer as pynr
 import tensorflow as tf
 import tensorflow_probability as tfp
 
-
-class ResidualBlock(tf.keras.layers.Layer):
-    def __init__(self, filters, **kwargs):
-        super(ResidualBlock, self).__init__(**kwargs)
-
-        kernel_initializer = tf.initializers.VarianceScaling(scale=2.0)
-
-        self.conv1 = tf.keras.layers.Conv2D(
-            filters=filters,
-            kernel_size=3,
-            strides=1,
-            padding="same",
-            activation=None,
-            kernel_initializer=kernel_initializer,
-        )
-        self.conv2 = tf.keras.layers.Conv2D(
-            filters=filters,
-            kernel_size=3,
-            strides=1,
-            padding="same",
-            activation=None,
-            kernel_initializer=kernel_initializer,
-        )
-
-    def call(self, inputs):
-        hidden = pynr.activations.swish(inputs)
-        hidden = self.conv1(hidden)
-        hidden = pynr.activations.swish(hidden)
-        hidden = self.conv2(hidden)
-        hidden += inputs
-        return hidden
+from tool_use.layers import ResidualBlock
 
 
-class Model(tf.keras.Model):
-    def __init__(self, observation_space, action_space, use_l2rl=True):
-        super(Model, self).__init__()
+class Policy(tf.keras.Model):
+    def __init__(self, action_space, use_l2rl=True):
+        super(Policy, self).__init__()
 
-        self.observation_space = observation_space
         self.action_space = action_space
         self.use_l2rl = use_l2rl
 

@@ -4,6 +4,7 @@ import argparse
 import numpy as np
 import tensorflow as tf
 
+from tool_use import constants
 from tool_use.sac.params import HyperParams
 from tool_use.sac.algorithm import Algorithm
 
@@ -25,7 +26,7 @@ def main():
     tf.random.set_seed(args.seed)
 
     # hyperparams
-    params = HyperParams(env=args.env, seed=args.seed)
+    params = HyperParams(env_name=args.env, seed=args.seed)
     params_path = os.path.join(args.job_dir, "params.json")
     params.save(params_path)
     print("params:", params)
@@ -35,7 +36,7 @@ def main():
     print("GPU Name:", tf.test.gpu_device_name())
 
     # training
-    algorithm = Algorithm(args.job_dir, params)
+    algorithm = Algorithm(args.job_dir, params, constants.env_names)
     algorithm.train()
 
 

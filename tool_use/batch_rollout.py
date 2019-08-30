@@ -10,7 +10,8 @@ class BatchRollout:
         action_space = self.env.action_space
         max_episode_steps = self.env.spec.max_episode_steps
 
-        batch_size = min(len(self.env), episodes)
+        env_batch_size = len(self.env)
+        batch_size = min(env_batch_size, episodes)
         batches = episodes // batch_size
 
         observations = np.zeros(
@@ -32,6 +33,7 @@ class BatchRollout:
         rewards = np.zeros(shape=(episodes, max_episode_steps), dtype=np.float32)
         rewards_prev = np.zeros(shape=(episodes, max_episode_steps), dtype=np.float32)
         weights = np.zeros(shape=(episodes, max_episode_steps), dtype=np.float32)
+        dones = np.ones(shape=(episodes, max_episode_steps), dtype=np.bool)
 
         if render_mode == "rgb_array":
             images = []
@@ -44,9 +46,9 @@ class BatchRollout:
 
             observation = self.env.reset()
             action_prev = np.zeros(
-                shape=(batch_size,) + action_space.shape, dtype=action_space.dtype
+                shape=(env_batch_size,) + action_space.shape, dtype=action_space.dtype
             )
-            reward_prev = np.zeros(shape=(batch_size,), dtype=np.float32)
+            reward_prev = np.zeros(shape=(env_batch_size,), dtype=np.float32)
 
             for step in range(max_episode_steps):
                 if render_mode == "rgb_array":
@@ -60,7 +62,6 @@ class BatchRollout:
                 inputs = {
                     "observations": observation[:, None, ...],
                     "actions_prev": action_prev[:, None, ...],
-                    "rewards_prev": reward_prev[:, None, ...],
                 }
                 actions_batch = policy(inputs, training=False, reset_state=reset_state)
                 action = actions_batch[:, 0].numpy()
@@ -79,6 +80,7 @@ class BatchRollout:
                 weights[batch_start:batch_end, step] = np.where(
                     episode_done[:batch_size], 0.0, 1.0
                 )
+                dones[batch_start:batch_end, step] = done[:batch_size]
 
                 episode_done = episode_done | done[:batch_size]
 

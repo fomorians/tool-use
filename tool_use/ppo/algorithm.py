@@ -4,15 +4,13 @@ import tensorflow as tf
 import pyoneer as pynr
 import pyoneer.rl as pyrl
 
-from tool_use.env import create_env, collect_transitions
-from tool_use.data import create_dataset
 from tool_use.seeds import Seeds
-from tool_use.ppo.model import Model
+from tool_use.utils import create_env, collect_transitions, create_dataset
+from tool_use.ppo.policy import Policy
 
 
 class Algorithm:
     def __init__(self, job_dir, params, eval_env_names):
-        self.job_dir = job_dir
         self.params = params
         self.eval_env_names = eval_env_names
 
@@ -26,17 +24,13 @@ class Algorithm:
         # optimization
         self.optimizer = tf.optimizers.Adam(learning_rate=self.params.learning_rate)
 
-        # models
-        env = create_env(self.params.env_name)()
-        self.model = Model(
-            observation_space=env.observation_space,
-            action_space=env.action_space,
-            use_l2rl=params.use_l2rl,
-        )
+        # model
+        env = create_env(params.env_name)()
+        self.policy = Policy(action_space=env.action_space, use_l2rl=params.use_l2rl)
 
         # policies
-        self.exploration_policy = pyrl.strategies.Sample(self.model)
-        self.inference_policy = pyrl.strategies.Mode(self.model)
+        self.exploration_policy = pyrl.strategies.Sample(self.policy)
+        self.inference_policy = pyrl.strategies.Mode(self.policy)
 
         # normalization
         self.extrinsic_rewards_moments = pynr.moments.ExponentialMovingMoments(
@@ -49,12 +43,12 @@ class Algorithm:
         # checkpoints
         self.checkpoint = tf.train.Checkpoint(
             optimizer=self.optimizer,
-            model=self.model,
+            policy=self.policy,
             extrinsic_rewards_moments=self.extrinsic_rewards_moments,
             intrinsic_rewards_moments=self.intrinsic_rewards_moments,
         )
         self.checkpoint_manager = tf.train.CheckpointManager(
-            self.checkpoint, directory=self.job_dir, max_to_keep=None
+            self.checkpoint, directory=job_dir, max_to_keep=None
         )
         if self.checkpoint_manager.latest_checkpoint:
             self.checkpoint.restore(
@@ -63,7 +57,7 @@ class Algorithm:
 
         # summaries
         self.summary_writer = tf.summary.create_file_writer(
-            self.job_dir, max_queue=100, flush_millis=5 * 60 * 1000
+            job_dir, max_queue=100, flush_millis=5 * 60 * 1000
         )
         self.summary_writer.set_as_default()
 
@@ -108,7 +102,7 @@ class Algorithm:
     def _batch_train(self, batch):
         with tf.GradientTape() as tape:
             # forward passes
-            outputs = self.model.get_training_outputs(
+            outputs = self.policy.get_training_outputs(
                 inputs=batch, training=True, reset_state=True
             )
             log_probs = outputs["log_probs"]
@@ -116,10 +110,10 @@ class Algorithm:
             values = outputs["values"]
 
             move_hot = tf.one_hot(
-                batch["actions"][..., 0], depth=self.model.action_space.nvec[0]
+                batch["actions"][..., 0], depth=self.policy.action_space.nvec[0]
             )
             grasp_hot = tf.one_hot(
-                batch["actions"][..., 1], depth=self.model.action_space.nvec[1]
+                batch["actions"][..., 1], depth=self.policy.action_space.nvec[1]
             )
 
             # losses
@@ -160,7 +154,7 @@ class Algorithm:
             regularization_loss = tf.add_n(
                 [
                     tf.nn.l2_loss(tvar) * self.params.l2_coef
-                    for tvar in self.model.trainable_variables
+                    for tvar in self.policy.trainable_variables
                 ]
             )
             loss = self._compute_loss(
@@ -172,12 +166,12 @@ class Algorithm:
             )
 
         # compute gradients
-        grads = tape.gradient(loss, self.model.trainable_variables)
+        grads = tape.gradient(loss, self.policy.trainable_variables)
         if self.params.grad_clipping is not None:
             grads_clipped, _ = tf.clip_by_global_norm(grads, self.params.grad_clipping)
         else:
             grads_clipped = grads
-        grads_and_vars = zip(grads_clipped, self.model.trainable_variables)
+        grads_and_vars = zip(grads_clipped, self.policy.trainable_variables)
 
         # optimization
         self.optimizer.apply_gradients(grads_and_vars)
@@ -219,7 +213,7 @@ class Algorithm:
     def _train(self, transitions):
         extrinsic_rewards = transitions["rewards"]
 
-        episodic_rewards = tf.reduce_mean(tf.reduce_sum(extrinsic_rewards, axis=-1))
+        episodic_rewards = tf.reduce_mean(tf.reduce_sum(extrinsic_rewards, axis=1))
         tf.print("episodic_rewards/train", episodic_rewards)
         tf.debugging.assert_less_equal(
             episodic_rewards, 1.0, message="episodic rewards must equal <= 1"
@@ -229,7 +223,7 @@ class Algorithm:
         )
 
         # compute anchor values
-        outputs = self.model.get_training_outputs(
+        outputs = self.policy.get_training_outputs(
             inputs=transitions, training=False, reset_state=True
         )
         log_probs_anchor = outputs["log_probs"]
@@ -274,12 +268,12 @@ class Algorithm:
             )
         else:
             extrinsic_rewards_norm = (
-                pynr.math.safe_divide(
+                tf.math.divide_no_nan(
                     extrinsic_rewards, self.extrinsic_rewards_moments.std
                 )
                 * transitions["weights"]
             )
-            intrinsic_rewards_norm = pynr.math.safe_divide(
+            intrinsic_rewards_norm = tf.math.divide_no_nan(
                 intrinsic_rewards, self.intrinsic_rewards_moments.std
             ) * (transitions["weights"] * self.params.intrinsic_scale)
 
@@ -349,9 +343,7 @@ class Algorithm:
             policy=self.inference_policy,
             seed=self.seeds.eval_seed(env_name),
         )
-        episodic_rewards = tf.reduce_mean(
-            tf.reduce_sum(transitions["rewards"], axis=-1)
-        )
+        episodic_rewards = tf.reduce_mean(tf.reduce_sum(transitions["rewards"], axis=1))
 
         tf.print("episodic_rewards/eval/{}".format(env_name), episodic_rewards)
         tf.debugging.assert_less_equal(

@@ -6,66 +6,70 @@ import pyoneer as pynr
 import pyoneer.rl as pyrl
 import tensorflow as tf
 
-from tool_use.sac.models import Policy, QFunction
+from tool_use import constants
+from tool_use.seeds import Seeds
+from tool_use.utils import create_env, collect_transitions, create_dataset
+from tool_use.sac.actor import Actor
+from tool_use.sac.critic import Critic
 
 
 class Algorithm:
-    def __init__(self, job_dir, params):
+    def __init__(self, job_dir, params, eval_env_names):
         self.params = params
+        self.eval_env_names = eval_env_names
 
-        self.env = pyrl.wrappers.Batch(
-            create_env(params.env), batch_size=params.batch_size
+        # seed manager
+        self.seeds = Seeds(
+            base_seed=params.seed,
+            env_batch_size=params.env_batch_size,
+            eval_env_names=eval_env_names,
         )
-        self.env.seed(params.seed)
 
-        self.policy = Policy(self.env.action_space)
-        self.policy_optimizer = tf.optimizers.Adam(learning_rate=params.learning_rate)
+        env = create_env(params.env_name)()
+        self.actor = Actor(env.action_space)
+        self.actor_optimizer = tf.optimizers.Adam(learning_rate=params.learning_rate)
 
         self.log_alpha = tf.Variable(0.0, trainable=True)
         self.alpha_optimizer = tf.optimizers.Adam(learning_rate=params.learning_rate)
 
         checkpointables = {
-            "directory": job_dir,
-            "policy": self.policy,
-            "policy_optimizer": self.policy_optimizer,
+            "actor": self.actor,
+            "actor_optimizer": self.actor_optimizer,
             "log_alpha": self.log_alpha,
             "alpha_optimizer": self.alpha_optimizer,
         }
 
-        self.q_fns = []
-        self.q_fn_targets = []
-        self.q_fn_optimizers = []
+        self.critics = []
+        self.critic_targets = []
+        self.critic_optimizers = []
 
-        for i in range(params.num_q_fns):
-            q_fn = QFunction()
-            q_fn_target = QFunction()
-            q_fn_optimizer = tf.optimizers.Adam(learning_rate=params.learning_rate)
+        for i in range(params.num_critics):
+            critic = Critic()
+            critic_target = Critic()
+            critic_optimizer = tf.optimizers.Adam(learning_rate=params.learning_rate)
 
-            self.q_fns.append(q_fn)
-            self.q_fn_targets.append(q_fn_target)
-            self.q_fn_optimizers.append(q_fn_optimizer)
+            self.critics.append(critic)
+            self.critic_targets.append(critic_target)
+            self.critic_optimizers.append(critic_optimizer)
 
-            checkpointables["q_fn{}".format(i)] = q_fn
-            checkpointables["q_fn{}_target".format(i)] = q_fn_target
-            checkpointables["q_fn{}_optimizer".format(i)] = q_fn_target
+            checkpointables["critic{}".format(i)] = critic
+            checkpointables["critic{}_target".format(i)] = critic_target
+            checkpointables["critic{}_optimizer".format(i)] = critic_target
 
-        self.job = pynr.jobs.Job(**checkpointables)
+        self.job = pynr.jobs.Job(directory=job_dir, **checkpointables)
 
-        self.agent = Agent(self.policy)
+        self.explore_policy = getattr(self.actor, "explore")
+        self.exploit_policy = getattr(self.actor, "exploit")
 
-        self.explore_strat = FnStrategy(self.agent, "explore")
-        self.exploit_strat = FnStrategy(self.agent, "exploit")
+        self.buffer = pyrl.transitions.TransitionBuffer(max_size=params.episodes_max)
 
-        self.rollout = pynr.rl.rollouts.Rollout(self.env)
-        self.buffer = pyrl.transitions.TransitionBuffer(max_size=params.max_size)
-
-        self.q_loss_fn = tf.losses.MeanSquaredError(
+        self.critic_loss_fn = tf.losses.MeanSquaredError(
             reduction=tf.keras.losses.Reduction.NONE
         )
-        self.policy_loss_fn = pyrl.losses.SoftPolicyGradient(
+        self.actor_loss_fn = pyrl.losses.SoftPolicyGradient(
             reduction=tf.keras.losses.Reduction.NONE
         )
-        self.alpha_loss_fn = pyrl.losses.SoftPolicyEntropy(
+        self.temperature_loss_fn = pyrl.losses.SoftPolicyEntropy(
             reduction=tf.keras.losses.Reduction.NONE,
             target_entropy=params.target_entropy,
         )
@@ -75,16 +79,22 @@ class Algorithm:
         return tf.exp(self.log_alpha)
 
     def _compute_targets(self, batch):
-        policy = self.policy(
-            batch["observations_next"], training=False, reset_state=True
+        actor_inputs = {
+            "observations": batch["observations_next"],
+            "actions_prev": batch["actions"],
+            "rewards_prev": batch["rewards"],
+        }
+        actions_next, log_probs_next = self.actor.sample(
+            actor_inputs, training=False, reset_state=True
         )
-        actions_next = policy.sample()
-        log_probs_next = policy.log_prob(actions_next)
 
-        inputs = {"observations": batch["observations_next"], "actions": actions_next}
-
+        critic_inputs = {
+            "observations": batch["observations_next"],
+            "actions": actions_next,
+        }
         action_values_next = [
-            q_fn(inputs, training=False, reset_state=True) for q_fn in self.q_fn_targets
+            critic(critic_inputs, training=False, reset_state=True)
+            for critic in self.critic_targets
         ]
         action_values_next_min = tf.reduce_min(action_values_next, axis=0)
 
@@ -102,13 +112,13 @@ class Algorithm:
 
         inputs = {"observations": batch["observations"], "actions": batch["actions"]}
 
-        for i, (q_fn, q_fn_optimizer) in enumerate(
-            zip(self.q_fns, self.q_fn_optimizers)
+        for i, (critic, critic_optimizer) in enumerate(
+            zip(self.critics, self.critic_optimizers)
         ):
             # compute loss
             with tf.GradientTape() as tape:
-                action_values = q_fn(inputs, training=True, reset_state=True)
-                losses = self.q_loss_fn(
+                action_values = critic(inputs, training=True, reset_state=True)
+                losses = self.critic_loss_fn(
                     y_pred=action_values[..., None],
                     y_true=targets[..., None],
                     sample_weight=batch["weights"][..., None],
@@ -116,12 +126,19 @@ class Algorithm:
                 loss = pynr.losses.compute_weighted_loss(
                     losses, sample_weight=batch["weights"]
                 )
+                regularization_loss = tf.add_n(
+                    [
+                        self.params.l2_scale * tf.nn.l2_loss(tvar)
+                        for tvar in critic.trainable_variables
+                    ]
+                )
+                total_loss = loss + regularization_loss
 
             # optimize gradients
-            grads = tape.gradient(loss, q_fn.trainable_variables)
+            grads = tape.gradient(total_loss, critic.trainable_variables)
             grads_clipped, _ = tf.clip_by_global_norm(grads, self.params.grad_clipping)
-            grads_and_vars = zip(grads_clipped, q_fn.trainable_variables)
-            q_fn_optimizer.apply_gradients(grads_and_vars)
+            grads_and_vars = zip(grads_clipped, critic.trainable_variables)
+            critic_optimizer.apply_gradients(grads_and_vars)
 
             # compute summaries
             with self.job.summary_context("train"):
@@ -131,44 +148,54 @@ class Algorithm:
                 grad_norm_clipped = tf.linalg.global_norm(grads_clipped)
 
                 tf.summary.histogram(
-                    "targets/q_fn/{}".format(i),
+                    "targets/critic/{}".format(i),
                     tf.boolean_mask(targets, mask),
-                    step=q_fn_optimizer.iterations,
+                    step=critic_optimizer.iterations,
                 )
                 tf.summary.histogram(
-                    "action_values/q_fn/{}".format(i),
+                    "action_values/critic/{}".format(i),
                     tf.boolean_mask(action_values, mask),
-                    step=q_fn_optimizer.iterations,
+                    step=critic_optimizer.iterations,
                 )
                 tf.summary.scalar(
-                    "losses/q_fn/{}".format(i), loss, step=q_fn_optimizer.iterations
+                    "losses/critic/{}".format(i), loss, step=critic_optimizer.iterations
                 )
                 tf.summary.scalar(
-                    "grad_norm/q_fn/{}".format(i),
+                    "losses/critic/{}/regularization".format(i),
+                    regularization_loss,
+                    step=critic_optimizer.iterations,
+                )
+                tf.summary.scalar(
+                    "grad_norm/critic/{}".format(i),
                     grad_norm,
-                    step=q_fn_optimizer.iterations,
+                    step=critic_optimizer.iterations,
                 )
                 tf.summary.scalar(
-                    "grad_norm_clipped/q_fn/{}".format(i),
+                    "grad_norm_clipped/critic/{}".format(i),
                     grad_norm_clipped,
-                    step=q_fn_optimizer.iterations,
+                    step=critic_optimizer.iterations,
                 )
 
     def _train_actor(self, batch):
         # compute loss
         with tf.GradientTape() as tape:
-            policy = self.policy(batch["observations"], training=True, reset_state=True)
-            actions = policy.sample()
-            log_probs = policy.log_prob(actions)
+            actor_inputs = {
+                "observations": batch["observations"],
+                "actions_prev": batch["actions_prev"],
+                "rewards_prev": batch["rewards_prev"],
+            }
+            actions, log_probs = self.actor.sample(
+                actor_inputs, training=True, reset_state=True
+            )
 
-            inputs = {"observations": batch["observations"], "actions": actions}
-
+            critic_inputs = {"observations": batch["observations"], "actions": actions}
             action_values = [
-                q_fn(inputs, training=False, reset_state=True) for q_fn in self.q_fns
+                critic(critic_inputs, training=False, reset_state=True)
+                for critic in self.critics
             ]
             action_values_min = tf.reduce_min(action_values, axis=0)
 
-            losses = self.policy_loss_fn(
+            losses = self.actor_loss_fn(
                 log_probs=log_probs,
                 action_values=action_values_min,
                 alpha=self.alpha,
@@ -177,12 +204,19 @@ class Algorithm:
             loss = pynr.losses.compute_weighted_loss(
                 losses, sample_weight=batch["weights"]
             )
+            regularization_loss = tf.add_n(
+                [
+                    self.params.l2_scale * tf.nn.l2_loss(tvar)
+                    for tvar in self.actor.trainable_variables
+                ]
+            )
+            total_loss = loss + regularization_loss
 
         # optimize gradients
-        grads = tape.gradient(loss, self.policy.trainable_variables)
+        grads = tape.gradient(total_loss, self.actor.trainable_variables)
         grads_clipped, _ = tf.clip_by_global_norm(grads, self.params.grad_clipping)
-        grads_and_vars = zip(grads_clipped, self.policy.trainable_variables)
-        self.policy_optimizer.apply_gradients(grads_and_vars)
+        grads_and_vars = zip(grads_clipped, self.actor.trainable_variables)
+        self.actor_optimizer.apply_gradients(grads_and_vars)
 
         # compute summaries
         with self.job.summary_context("train"):
@@ -191,32 +225,26 @@ class Algorithm:
             grad_norm = tf.linalg.global_norm(grads)
             grad_norm_clipped = tf.linalg.global_norm(grads_clipped)
 
-            for i in range(self.policy.num_outputs):
-                tf.summary.histogram(
-                    "actions/data/{}".format(i),
-                    tf.boolean_mask(batch["actions"][..., i], mask),
-                    step=self.policy_optimizer.iterations,
-                )
-                tf.summary.histogram(
-                    "actions/sampled/{}".format(i),
-                    tf.boolean_mask(actions[..., i], mask),
-                    step=self.policy_optimizer.iterations,
-                )
             tf.summary.histogram(
                 "log_probs",
                 tf.boolean_mask(log_probs, mask),
-                step=self.policy_optimizer.iterations,
+                step=self.actor_optimizer.iterations,
             )
             tf.summary.scalar(
-                "losses/policy", loss, step=self.policy_optimizer.iterations
+                "losses/actor", loss, step=self.actor_optimizer.iterations
             )
             tf.summary.scalar(
-                "grad_norm/policy", grad_norm, step=self.policy_optimizer.iterations
+                "losses/actor/regularization",
+                regularization_loss,
+                step=self.actor_optimizer.iterations,
             )
             tf.summary.scalar(
-                "grad_norm_clipped/policy",
+                "grad_norm/actor", grad_norm, step=self.actor_optimizer.iterations
+            )
+            tf.summary.scalar(
+                "grad_norm_clipped/actor",
                 grad_norm_clipped,
-                step=self.policy_optimizer.iterations,
+                step=self.actor_optimizer.iterations,
             )
 
         return log_probs
@@ -224,7 +252,7 @@ class Algorithm:
     def _train_alpha(self, batch, log_probs):
         # compute loss
         with tf.GradientTape() as tape:
-            losses = self.alpha_loss_fn(
+            losses = self.temperature_loss_fn(
                 log_probs=log_probs,
                 log_alpha=self.log_alpha,
                 sample_weight=batch["weights"],
@@ -270,90 +298,101 @@ class Algorithm:
             self._train_alpha(batch, log_probs)
 
             # update target network
-            for q_fn, q_fn_target in zip(self.q_fns, self.q_fn_targets):
+            for critic, critic_target in zip(self.critics, self.critic_targets):
                 pynr.variables.update_variables(
-                    q_fn.variables,
-                    q_fn_target.variables,
+                    critic.variables,
+                    critic_target.variables,
                     rate=self.params.target_update_rate,
                 )
 
-    def _train(self):
+    def _train(self, it):
         if self.params.episodes_train > 0:
             # collect new transitions
-            transitions = self.rollout(
-                self.explore_strat, episodes=self.params.episodes_train
+            transitions = collect_transitions(
+                env_name=self.params.env_name,
+                episodes=self.params.episodes_train,
+                batch_size=self.params.env_batch_size,
+                policy=self.explore_policy,
+                seed=self.seeds.train_seed(it),
             )
-            if self.params.flatten:
-                transitions_flat = flatten_transitions(transitions)
-                self.buffer.append(transitions_flat)
-            else:
-                self.buffer.append(transitions)
+            self.buffer.append(transitions)
 
             # compute summaries
             with self.job.summary_context("train"):
-                episodic_reward = episodic_mean(transitions["rewards"])
+                episodic_reward = tf.reduce_mean(
+                    tf.reduce_sum(transitions["rewards"], axis=-1)
+                )
 
                 tf.summary.scalar(
                     "episodic_rewards/train",
                     episodic_reward,
-                    step=self.policy_optimizer.iterations,
+                    step=self.actor_optimizer.iterations,
                 )
                 tf.summary.scalar(
                     "buffer/size",
                     self.buffer.size,
-                    step=self.policy_optimizer.iterations,
+                    step=self.actor_optimizer.iterations,
                 )
 
-        transitions = self.buffer.sample(size=self.params.num_samples)
+        transitions = self.buffer.sample(size=self.params.episodes_train)
         self._train_data(transitions)
 
     def _eval(self):
-        if self.params.episodes_eval > 0:
+        if self.params.episodes_eval == 0:
+            return
+
+        for env_name in constants.env_names:
             # collect new transitions
-            transitions = self.rollout(
-                self.exploit_strat, episodes=self.params.episodes_eval
+            transitions = collect_transitions(
+                env_name=env_name,
+                episodes=self.params.episodes_eval,
+                batch_size=self.params.env_batch_size,
+                policy=self.exploit_policy,
+                seed=self.seeds.eval_seed(env_name),
             )
 
             # compute summaries
             with self.job.summary_context("eval"):
-                episodic_reward = episodic_mean(transitions["rewards"])
+                episodic_reward = tf.reduce_mean(
+                    tf.reduce_sum(transitions["rewards"], axis=-1)
+                )
 
                 tf.summary.scalar(
                     "episodic_rewards/eval",
                     episodic_reward,
-                    step=self.policy_optimizer.iterations,
+                    step=self.actor_optimizer.iterations,
                 )
 
     def _initialize_models(self):
+        env = create_env(self.params.env_name)()
+
         # create mock inputs to initialize models
-        mock_observation = self.env.observation_space.sample()
-        mock_action = self.env.action_space.sample()
+        mock_observation = env.observation_space.sample()
+        mock_action = env.action_space.sample()
 
         mock_observations = np.asarray(mock_observation)[None, None, ...]
         mock_actions = np.asarray(mock_action)[None, None, ...]
 
         inputs = {"observations": mock_observations, "actions": mock_actions}
 
-        for q_fn, q_fn_target in zip(self.q_fns, self.q_fn_targets):
+        for critic, critic_target in zip(self.critics, self.critic_targets):
             # initialize models so we can update target the variables
-            q_fn(inputs, training=True, reset_state=True)
-            q_fn_target(inputs, training=True, reset_state=True)
+            critic(inputs, training=True, reset_state=True)
+            critic_target(inputs, training=True, reset_state=True)
 
             # update target network by hard-copying all variables
-            pynr.variables.update_variables(q_fn.variables, q_fn_target.variables)
+            pynr.variables.update_variables(critic.variables, critic_target.variables)
 
     def _train_iter(self, it):
-        tf.print("iteration:", it)
-
         # train
         with pynr.debugging.Stopwatch() as train_stopwatch:
-            self._train()
+            self._train(it)
 
         with self.job.summary_context("train"):
             tf.summary.scalar(
                 "time/train",
                 train_stopwatch.duration,
-                step=self.policy_optimizer.iterations,
+                step=self.actor_optimizer.iterations,
             )
 
         # eval
@@ -364,7 +403,7 @@ class Algorithm:
             tf.summary.scalar(
                 "time/eval",
                 eval_stopwatch.duration,
-                step=self.policy_optimizer.iterations,
+                step=self.actor_optimizer.iterations,
             )
 
         self.job.save(checkpoint_number=it)
@@ -373,22 +412,18 @@ class Algorithm:
         self._initialize_models()
 
         # sample random transitions to pre-fill the transitions buffer
-        if self.params.steps_init > 0:
-            while self.buffer.size < self.params.steps_init:
-                transitions = self.rollout(self.explore_strat, episodes=1)
-                if self.params.flatten:
-                    transitions_flat = flatten_transitions(transitions)
-                    self.buffer.append(transitions_flat)
-                else:
-                    self.buffer.append(transitions)
-                print(
-                    "Filling buffer... ({:.2f}%)".format(
-                        (self.buffer.size / self.params.steps_init) * 100
-                    )
-                )
+        transitions = collect_transitions(
+            env_name=self.params.env_name,
+            episodes=self.params.episodes_init,
+            batch_size=self.params.env_batch_size,
+            policy=self.explore_policy,
+            seed=self.seeds.train_seed(0),
+        )
+        self.buffer.append(transitions)
 
         # begin training iterations
-        for it in range(self.params.iterations):
+        for it in range(1, 1 + self.params.train_iters):
+            tf.print("iteration:", it - 1)
             self._train_iter(it)
 
         # flush each iteration

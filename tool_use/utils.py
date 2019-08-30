@@ -6,13 +6,6 @@ import pyoneer.rl as pyrl
 from tool_use.batch_rollout import BatchRollout
 
 
-def episodic_mean(inputs):
-    """
-    Compute the episodic mean: sum over steps => average over episodes.
-    """
-    return tf.reduce_mean(tf.reduce_sum(inputs, axis=1))
-
-
 def create_env(env_name):
     """
     Create an environment and apply observation and action processing.
@@ -22,6 +15,7 @@ def create_env(env_name):
         env = gym.make(env_name)
         env = pyrl.wrappers.ObservationCoordinates(env)
         env = pyrl.wrappers.ObservationNormalization(env)
+        env = pyrl.wrappers.MultiActionProbs(env)
         return env
 
     return _create_env
@@ -40,9 +34,7 @@ def collect_transitions(env_name, episodes, batch_size, policy, seed, render_mod
 
 
 def flatten_transitions(transitions):
-    """
-    Flatten episode and step dimensions of transitions.
-    """
+    # flatten episode and step dimensions of transitions
     transitions_flat = {}
     for key, val in transitions.items():
         transitions_flat[key] = val.reshape((-1,) + val.shape[2:])
@@ -54,6 +46,20 @@ def flatten_transitions(transitions):
         transitions_flat[key] = val[indices]
 
     return transitions_flat
+
+
+def create_dataset(data, batch_size=None, epochs=None):
+    """
+    Create a dataset with the given data, batch size and number of epochs.
+    """
+    with tf.device("/cpu:0"):
+        dataset = tf.data.Dataset.from_tensor_slices(data)
+        if batch_size is not None:
+            dataset = dataset.batch(batch_size, drop_remainder=True)
+        if epochs is not None:
+            dataset = dataset.repeat(epochs)
+        dataset = dataset.prefetch(tf.data.experimental.AUTOTUNE)
+    return dataset
 
 
 def save_images(job_dir, env_name, transitions):
