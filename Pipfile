@@ -10,8 +10,9 @@ fomoro-pyoneer = {editable = true,path = "/Users/fomoro/Documents/pyoneer"}
 pycolab = "*"
 gym-pycolab = "*"
 gym-tool-use = {editable = true,path = "/Users/fomoro/Documents/gym_tool_use"}
-tensorflow = "==2.0.0-beta1"
-tensorflow-probability = "*"
+imageio = "*"
+tf-nightly-2-0-preview = "*"
+tfp-nightly = "*"
 
 [dev-packages]
 jupyterlab = "*"
@@ -19,7 +20,6 @@ matplotlib = "*"
 seaborn = "*"
 ipdb = "*"
 tqdm = "*"
-imageio = "*"
 
 [requires]
 python_version = "3.6"

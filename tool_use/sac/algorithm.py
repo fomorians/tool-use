@@ -1,5 +1,4 @@
 import sys
-
 import gym
 import numpy as np
 import pyoneer as pynr
@@ -13,6 +12,19 @@ from tool_use.sac.actor import Actor
 from tool_use.sac.critic import Critic
 
 
+def compute_sample_probs(priorities, alpha=0.7):
+    priorities_exp = tf.math.pow(priorities, alpha)
+    probs = priorities_exp / tf.math.reduce_sum(priorities_exp)
+    probs = tf.math.reduce_sum(probs, axis=-1)  # aggregate over time
+    return probs
+
+
+def compute_is_weight(probs, buffer_size, beta=0.5):
+    is_weight = tf.pow(buffer_size * probs, -beta)
+    is_weight /= tf.math.reduce_max(is_weight)
+    return is_weight
+
+
 class Algorithm:
     def __init__(self, job_dir, params, eval_env_names):
         self.params = params
@@ -21,12 +33,12 @@ class Algorithm:
         # seed manager
         self.seeds = Seeds(
             base_seed=params.seed,
-            env_batch_size=params.env_batch_size,
+            env_batch_size=params.batch_size,
             eval_env_names=eval_env_names,
         )
 
-        env = create_env(params.env_name)()
-        self.actor = Actor(env.action_space)
+        self.proto_env = create_env(params.env_name)()
+        self.actor = Actor(self.proto_env.action_space, params.batch_size)
         self.actor_optimizer = tf.optimizers.Adam(learning_rate=params.learning_rate)
 
         self.log_alpha = tf.Variable(0.0, trainable=True)
@@ -44,8 +56,8 @@ class Algorithm:
         self.critic_optimizers = []
 
         for i in range(params.num_critics):
-            critic = Critic()
-            critic_target = Critic()
+            critic = Critic(params.batch_size)
+            critic_target = Critic(params.batch_size)
             critic_optimizer = tf.optimizers.Adam(learning_rate=params.learning_rate)
 
             self.critics.append(critic)
@@ -107,10 +119,19 @@ class Algorithm:
         )
         return tf.stop_gradient(targets)
 
+    def _compute_is_weight(self, priorities):
+        probs = compute_sample_probs(priorities, alpha=self.params.alpha)
+        is_weight = compute_is_weight(
+            probs, buffer_size=self.buffer.size, beta=self.params.beta
+        )
+        return is_weight[:, None]
+
     def _train_critic(self, batch):
         targets = self._compute_targets(batch)
 
         inputs = {"observations": batch["observations"], "actions": batch["actions"]}
+        is_weight = self._compute_is_weight(batch["priorities"])
+        action_values_list = []
 
         for i, (critic, critic_optimizer) in enumerate(
             zip(self.critics, self.critic_optimizers)
@@ -121,7 +142,7 @@ class Algorithm:
                 losses = self.critic_loss_fn(
                     y_pred=action_values[..., None],
                     y_true=targets[..., None],
-                    sample_weight=batch["weights"][..., None],
+                    sample_weight=batch["weights"][..., None] * is_weight[..., None],
                 )
                 loss = pynr.losses.compute_weighted_loss(
                     losses, sample_weight=batch["weights"]
@@ -133,6 +154,8 @@ class Algorithm:
                     ]
                 )
                 total_loss = loss + regularization_loss
+
+            action_values_list.append(action_values)
 
             # optimize gradients
             grads = tape.gradient(total_loss, critic.trainable_variables)
@@ -176,7 +199,13 @@ class Algorithm:
                     step=critic_optimizer.iterations,
                 )
 
+        action_values_min = tf.reduce_min(action_values_list, axis=0)
+        td_errors = targets - action_values_min
+        return td_errors
+
     def _train_actor(self, batch):
+        is_weight = self._compute_is_weight(batch["priorities"])
+
         # compute loss
         with tf.GradientTape() as tape:
             actor_inputs = {
@@ -199,7 +228,7 @@ class Algorithm:
                 log_probs=log_probs,
                 action_values=action_values_min,
                 alpha=self.alpha,
-                sample_weight=batch["weights"],
+                sample_weight=batch["weights"] * is_weight,
             )
             loss = pynr.losses.compute_weighted_loss(
                 losses, sample_weight=batch["weights"]
@@ -230,6 +259,20 @@ class Algorithm:
                 tf.boolean_mask(log_probs, mask),
                 step=self.actor_optimizer.iterations,
             )
+
+            for i, action_name in enumerate(["move", "grasp"]):
+                for j in range(4):
+                    tf.summary.histogram(
+                        "actions/data/{}/{}".format(action_name, j),
+                        tf.boolean_mask(batch["actions"][..., i, j], mask),
+                        step=self.actor_optimizer.iterations,
+                    )
+                    tf.summary.histogram(
+                        "actions/sampled/{}/{}".format(action_name, j),
+                        tf.boolean_mask(actions[..., i, j], mask),
+                        step=self.actor_optimizer.iterations,
+                    )
+
             tf.summary.scalar(
                 "losses/actor", loss, step=self.actor_optimizer.iterations
             )
@@ -250,12 +293,14 @@ class Algorithm:
         return log_probs
 
     def _train_alpha(self, batch, log_probs):
+        is_weight = self._compute_is_weight(batch["priorities"])
+
         # compute loss
         with tf.GradientTape() as tape:
             losses = self.temperature_loss_fn(
                 log_probs=log_probs,
                 log_alpha=self.log_alpha,
-                sample_weight=batch["weights"],
+                sample_weight=batch["weights"] * is_weight,
             )
             loss = pynr.losses.compute_weighted_loss(
                 losses, sample_weight=batch["weights"]
@@ -285,25 +330,32 @@ class Algorithm:
                 "grad_norm/alpha", grad_norm, step=self.alpha_optimizer.iterations
             )
 
-    # @tf.function
-    def _train_data(self, transitions):
-        dataset = (
-            tf.data.Dataset.from_tensor_slices(transitions)
-            .batch(self.params.batch_size)
-            .prefetch(tf.data.experimental.AUTOTUNE)
-        )
-        for batch in dataset:
-            self._train_critic(batch)
-            log_probs = self._train_actor(batch)
-            self._train_alpha(batch, log_probs)
+    @tf.function
+    def _train_batch(self, batch):
+        td_errors = self._train_critic(batch)
+        log_probs = self._train_actor(batch)
+        self._train_alpha(batch, log_probs)
 
-            # update target network
-            for critic, critic_target in zip(self.critics, self.critic_targets):
-                pynr.variables.update_variables(
-                    critic.variables,
-                    critic_target.variables,
-                    rate=self.params.target_update_rate,
-                )
+        # update target network
+        for critic, critic_target in zip(self.critics, self.critic_targets):
+            pynr.variables.update_variables(
+                critic.variables,
+                critic_target.variables,
+                rate=self.params.target_update_rate,
+            )
+
+        return td_errors
+
+    def _train_data(self, transitions, indices):
+        dataset = create_dataset(
+            (transitions, indices), batch_size=self.params.batch_size
+        )
+        for batch, indices in dataset:
+            td_errors = self._train_batch(batch)
+            batch["priorities"] = tf.abs(td_errors)
+
+            # update priorities
+            self.buffer.update(indices, batch)
 
     def _train(self, it):
         if self.params.episodes_train > 0:
@@ -311,10 +363,14 @@ class Algorithm:
             transitions = collect_transitions(
                 env_name=self.params.env_name,
                 episodes=self.params.episodes_train,
-                batch_size=self.params.env_batch_size,
+                batch_size=self.params.batch_size,
                 policy=self.explore_policy,
                 seed=self.seeds.train_seed(it),
             )
+
+            # initialize priorities to 1M (arbitrary)
+            transitions["priorities"] = np.ones_like(transitions["weights"]) * 1e6
+
             self.buffer.append(transitions)
 
             # compute summaries
@@ -334,8 +390,13 @@ class Algorithm:
                     step=self.actor_optimizer.iterations,
                 )
 
-        transitions = self.buffer.sample(size=self.params.episodes_train)
-        self._train_data(transitions)
+        probs = compute_sample_probs(
+            self.buffer["priorities"], alpha=self.params.alpha
+        ).numpy()
+        transitions, indices = self.buffer.sample(
+            size=self.params.episodes_train_sample, p=probs, return_indices=True
+        )
+        self._train_data(transitions, indices)
 
     def _eval(self):
         if self.params.episodes_eval == 0:
@@ -346,7 +407,7 @@ class Algorithm:
             transitions = collect_transitions(
                 env_name=env_name,
                 episodes=self.params.episodes_eval,
-                batch_size=self.params.env_batch_size,
+                batch_size=self.params.batch_size,
                 policy=self.exploit_policy,
                 seed=self.seeds.eval_seed(env_name),
             )
@@ -358,27 +419,36 @@ class Algorithm:
                 )
 
                 tf.summary.scalar(
-                    "episodic_rewards/eval",
+                    "episodic_rewards/eval/{}".format(env_name),
                     episodic_reward,
                     step=self.actor_optimizer.iterations,
                 )
 
     def _initialize_models(self):
-        env = create_env(self.params.env_name)()
-
         # create mock inputs to initialize models
-        mock_observation = env.observation_space.sample()
-        mock_action = env.action_space.sample()
+        mock_observation = self.proto_env.observation_space.sample()
+        mock_action = self.proto_env.action_space.sample()
+
+        batch_size = self.params.batch_size
+        max_episode_steps = self.proto_env.spec.max_episode_steps
 
         mock_observations = np.asarray(mock_observation)[None, None, ...]
         mock_actions = np.asarray(mock_action)[None, None, ...]
 
-        inputs = {"observations": mock_observations, "actions": mock_actions}
+        mock_observations = np.tile(
+            mock_observations, [batch_size, max_episode_steps, 1, 1, 1]
+        )
+        mock_actions = np.tile(mock_actions, [batch_size, max_episode_steps, 1, 1])
+
+        critic_inputs = {"observations": mock_observations, "actions": mock_actions}
+        actor_inputs = {"observations": mock_observations, "actions_prev": mock_actions}
+
+        self.actor(actor_inputs, training=True, reset_state=True)
 
         for critic, critic_target in zip(self.critics, self.critic_targets):
             # initialize models so we can update target the variables
-            critic(inputs, training=True, reset_state=True)
-            critic_target(inputs, training=True, reset_state=True)
+            critic(critic_inputs, training=True, reset_state=True)
+            critic_target(critic_inputs, training=True, reset_state=True)
 
             # update target network by hard-copying all variables
             pynr.variables.update_variables(critic.variables, critic_target.variables)
@@ -407,26 +477,32 @@ class Algorithm:
             )
 
         self.job.save(checkpoint_number=it)
+        self.job.flush_summaries()
 
     def train(self):
         self._initialize_models()
 
         # sample random transitions to pre-fill the transitions buffer
-        transitions = collect_transitions(
-            env_name=self.params.env_name,
-            episodes=self.params.episodes_init,
-            batch_size=self.params.env_batch_size,
-            policy=self.explore_policy,
-            seed=self.seeds.train_seed(0),
-        )
-        self.buffer.append(transitions)
+        if self.params.episodes_init > 0:
+            transitions = collect_transitions(
+                env_name=self.params.env_name,
+                episodes=self.params.episodes_init,
+                batch_size=self.params.batch_size,
+                policy=self.explore_policy,
+                seed=self.seeds.train_seed(0),
+            )
+
+            # initialize priorities to 1M (arbitrary)
+            transitions["priorities"] = np.ones_like(transitions["weights"]) * 1e6
+
+            self.buffer.append(transitions)
 
         # begin training iterations
-        for it in range(1, 1 + self.params.train_iters):
+        for it in range(1, self.params.train_iters + 1):
             tf.print("iteration:", it - 1)
+
             self._train_iter(it)
 
-        # flush each iteration
-        sys.stdout.flush()
-        sys.stderr.flush()
-        self.job.flush_summaries()
+            # flush each iteration
+            sys.stdout.flush()
+            sys.stderr.flush()

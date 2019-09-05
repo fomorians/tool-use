@@ -6,7 +6,7 @@ from tool_use.layers import ResidualBlock
 
 
 class Actor(tf.keras.Model):
-    def __init__(self, action_space, **kwargs):
+    def __init__(self, action_space, batch_size, **kwargs):
         super(Actor, self).__init__(**kwargs)
 
         self.action_space = action_space
@@ -14,8 +14,7 @@ class Actor(tf.keras.Model):
         kernel_initializer = tf.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.initializers.VarianceScaling(scale=1.0)
 
-        self.initial_hidden_state = tf.Variable(tf.zeros(shape=[1, 64]), trainable=True)
-        self.hidden_state = None
+        self.state = tf.Variable(tf.zeros(shape=[batch_size, 64]), trainable=False)
 
         self.conv1 = tf.keras.layers.Conv2D(
             filters=32,
@@ -62,6 +61,7 @@ class Actor(tf.keras.Model):
             kernel_initializer=logits_initializer,
         )
 
+    @tf.function
     def call(self, inputs, training=None, reset_state=None):
         observations = inputs["observations"]
         actions_prev = inputs["actions_prev"]
@@ -90,18 +90,20 @@ class Actor(tf.keras.Model):
 
         hidden = tf.reshape(hidden, [batch_size, steps, self.dense_hidden.units])
 
-        if self.hidden_state is None or reset_state:
-            self.hidden_state = tf.tile(self.initial_hidden_state, [batch_size, 1])
-
-        hidden, self.hidden_state = self.rnn(hidden, initial_state=self.hidden_state)
+        if reset_state:
+            self.state.assign(tf.zeros_like(self.state))
+        hidden, state = self.rnn(hidden, initial_state=self.state)
+        self.state.assign(state)
 
         move_logits = self.move_logits(hidden)
         grasp_logits = self.grasp_logits(hidden)
 
         return move_logits, grasp_logits
 
-    def get_dist(self, *args, **kwargs):
-        move_logits, grasp_logits = self.call(*args, **kwargs)
+    def get_dist(self, inputs, training=None, reset_state=None):
+        move_logits, grasp_logits = self.call(
+            inputs, training=training, reset_state=reset_state
+        )
         move_dist = tfp.distributions.RelaxedOneHotCategorical(
             logits=move_logits, temperature=1.0
         )
@@ -110,22 +112,31 @@ class Actor(tf.keras.Model):
         )
         return move_dist, grasp_dist
 
-    def explore(self, *args, **kwargs):
-        move_dist, grasp_dist = self.get_dist(*args, **kwargs)
+    @tf.function
+    def explore(self, inputs, training=None, reset_state=None):
+        move_dist, grasp_dist = self.get_dist(
+            inputs, training=training, reset_state=reset_state
+        )
         move_actions = move_dist.sample()
         grasp_actions = grasp_dist.sample()
         actions = tf.stack([move_actions, grasp_actions], axis=-2)
         return actions
 
-    def exploit(self, *args, **kwargs):
-        move_logits, grasp_logits = self.call(*args, **kwargs)
+    @tf.function
+    def exploit(self, inputs, training=None, reset_state=None):
+        move_logits, grasp_logits = self.call(
+            inputs, training=training, reset_state=reset_state
+        )
         move_actions = tf.math.softmax(move_logits)
         grasp_actions = tf.math.softmax(grasp_logits)
         actions = tf.stack([move_actions, grasp_actions], axis=-2)
         return actions
 
-    def sample(self, *args, **kwargs):
-        move_dist, grasp_dist = self.get_dist(*args, **kwargs)
+    @tf.function
+    def sample(self, inputs, training=None, reset_state=None):
+        move_dist, grasp_dist = self.get_dist(
+            inputs, training=training, reset_state=reset_state
+        )
         move_actions = move_dist.sample()
         grasp_actions = grasp_dist.sample()
         move_log_probs = move_dist.log_prob(move_actions)

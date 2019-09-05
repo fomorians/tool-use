@@ -6,14 +6,13 @@ from tool_use.layers import ResidualBlock
 
 
 class Critic(tf.keras.Model):
-    def __init__(self, **kwargs):
+    def __init__(self, batch_size, **kwargs):
         super(Critic, self).__init__(**kwargs)
 
         kernel_initializer = tf.initializers.VarianceScaling(scale=2.0)
         logits_initializer = tf.initializers.VarianceScaling(scale=1.0)
 
-        self.initial_hidden_state = tf.Variable(tf.zeros(shape=[1, 64]), trainable=True)
-        self.hidden_state = None
+        self.state = tf.Variable(tf.zeros(shape=[batch_size, 64]), trainable=False)
 
         self.conv1 = tf.keras.layers.Conv2D(
             filters=32,
@@ -53,6 +52,7 @@ class Critic(tf.keras.Model):
             units=1, activation=None, kernel_initializer=logits_initializer
         )
 
+    @tf.function
     def call(self, inputs, training=None, reset_state=None):
         observations = inputs["observations"]
         actions = inputs["actions"]
@@ -79,11 +79,11 @@ class Critic(tf.keras.Model):
 
         hidden = tf.reshape(hidden, [batch_size, steps, self.dense_hidden.units])
 
-        if self.hidden_state is None or reset_state:
-            self.hidden_state = tf.tile(self.initial_hidden_state, [batch_size, 1])
+        if reset_state:
+            self.state.assign(tf.zeros_like(self.state))
+        hidden, state = self.rnn(hidden, initial_state=self.state)
+        self.state.assign(state)
 
-        hidden, self.hidden_state = self.rnn(hidden, initial_state=self.hidden_state)
+        logits = tf.squeeze(self.logits(hidden), axis=-1)
 
-        logits = self.logits(hidden)
-
-        return tf.squeeze(logits, axis=-1)
+        return logits
