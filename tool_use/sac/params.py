@@ -27,7 +27,7 @@ class HyperParams:
     # sac
     num_critics = attr.ib(default=2, type=int)
     target_update_rate = attr.ib(default=5e-3, type=float)
-    target_entropy = attr.ib(default=-2.0, type=float)
+    target_entropy = attr.ib(default=-4.0, type=float)
 
     # PER
     alpha = attr.ib(default=0.7, type=float)

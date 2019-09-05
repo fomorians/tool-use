@@ -351,7 +351,9 @@ class Algorithm:
             (transitions, indices), batch_size=self.params.batch_size
         )
         for batch, indices in dataset:
-            td_errors = self._train_batch(batch)
+            with pynr.debugging.Stopwatch() as train_stopwatch:
+                td_errors = self._train_batch(batch)
+            tf.print("_train_batch", train_stopwatch.duration)
             batch["priorities"] = tf.abs(td_errors)
 
             # update priorities
@@ -457,6 +459,7 @@ class Algorithm:
         # train
         with pynr.debugging.Stopwatch() as train_stopwatch:
             self._train(it)
+        tf.print("_train", train_stopwatch.duration)
 
         with self.job.summary_context("train"):
             tf.summary.scalar(
@@ -468,6 +471,7 @@ class Algorithm:
         # eval
         with pynr.debugging.Stopwatch() as eval_stopwatch:
             self._eval()
+        tf.print("_eval", eval_stopwatch.duration)
 
         with self.job.summary_context("eval"):
             tf.summary.scalar(

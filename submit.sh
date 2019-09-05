@@ -13,22 +13,23 @@ NOW=$(date +"%Y%m%d_%H%M%S")
 JOB_NAME=$(echo "${ENV_NAME}_${SEED}_${DESC}_${NOW}" | tr "-" "_")
 JOB_DIR="gs://tool-use-jobs/$ENV_NAME/$SEED/$DESC"
 
-PREFIX="$HOME/Documents"
-PYCOLAB_PACKAGE="$PREFIX/pycolab/dist/pycolab-1.2.tar.gz"
-GYM_PYCOLAB_PACKAGE="$PREFIX/gym_pycolab/dist/gym-pycolab-1.0.0.tar.gz"
-GYM_TOOL_USE_PACKAGE="$PREFIX/gym_tool_use/dist/gym-tool-use-1.0.0.tar.gz"
-PYONEER_PACKAGE="$PREFIX/pyoneer/dist/fomoro-pyoneer-0.3.0.tar.gz"
-PACKAGES="$PYCOLAB_PACKAGE,$GYM_PYCOLAB_PACKAGE,$GYM_TOOL_USE_PACKAGE,$PYONEER_PACKAGE"
+PROJECT_ID=$(gcloud config list project --format "value(core.project)")
+IMAGE_REPO_NAME="tool_use"
+IMAGE_TAG="tool_use"
+IMAGE_URI="gcr.io/$PROJECT_ID/$IMAGE_REPO_NAME:$IMAGE_TAG"
+
+REGION="us-west1"
+SCALE_TIER="CUSTOM"
+MACHINE_TYPE="standard_gpu"
 
 gcloud ai-platform jobs submit training $JOB_NAME \
-    --staging-bucket "gs://tool-use-staging" \
-    --package-path "$(pwd)/tool_use" \
-    --job-dir ${JOB_DIR} \
-    --packages ${PACKAGES} \
-    --module-name "tool_use.sac.train" \
-    --config "$(pwd)/config.yaml" \
+    --scale-tier $SCALE_TIER \
+    --master-machine-type $MACHINE_TYPE \
+    --master-image-uri $IMAGE_URI \
     --stream-logs \
+    --region $REGION \
     -- \
-    --env ${ENV_NAME} \
-    --seed ${SEED} \
+    --job-dir $JOB_DIR \
+    --seed $SEED \
+    --env $ENV_NAME \
     $@

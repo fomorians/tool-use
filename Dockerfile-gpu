@@ -1,0 +1,68 @@
+FROM nvidia/cuda:9.0-cudnn7-runtime
+
+# install dependencies
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends software-properties-common && \
+    apt-get upgrade -y
+
+# install dependencies
+RUN add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+         wget \
+         curl \
+         python3.6 \
+         python3-pip \
+         python3.6-dev \
+         python3-setuptools
+
+# update pip
+RUN pip3 install --upgrade pip
+
+# cleanup
+RUN rm -rf /var/lib/apt/lists/*
+
+WORKDIR /root
+
+# install google cloud sdk
+RUN wget -nv \
+    https://dl.google.com/dl/cloudsdk/release/google-cloud-sdk.tar.gz && \
+    mkdir /root/tools && \
+    tar xvzf google-cloud-sdk.tar.gz -C /root/tools && \
+    rm google-cloud-sdk.tar.gz && \
+    /root/tools/google-cloud-sdk/install.sh --usage-reporting=false \
+        --path-update=false --bash-completion=false \
+        --disable-installation-options && \
+    rm -rf /root/.config/* && \
+    ln -s /root/.config /config && \
+    rm -rf /root/tools/google-cloud-sdk/.install/.backup
+
+# path configuration
+ENV PATH $PATH:/root/tools/google-cloud-sdk/bin
+
+# use default service account
+RUN echo '[GoogleCompute]\nservice_account = default' > /etc/boto.cfg
+
+COPY packages/pycolab-1.2.tar.gz .
+COPY packages/gym-pycolab-1.0.0.tar.gz .
+COPY packages/gym-tool-use-1.0.0.tar.gz .
+COPY packages/fomoro-pyoneer-0.3.0.tar.gz .
+
+# install dependencies
+RUN pip3 install gym==0.12.5
+RUN pip3 install attrs==19.1.0
+RUN pip3 install imageio==2.5.0
+RUN pip3 install pycolab-1.2.tar.gz
+RUN pip3 install gym-pycolab-1.0.0.tar.gz
+RUN pip3 install gym-tool-use-1.0.0.tar.gz
+RUN pip3 install fomoro-pyoneer-0.3.0.tar.gz
+RUN pip3 install tf-nightly-gpu-2.0-preview==2.0.0.dev20190903
+RUN pip3 install tfp-nightly==0.9.0.dev20190904
+
+# copy trainer code
+RUN mkdir /root/tool_use
+COPY . /root/tool_use
+WORKDIR /root/tool_use
+
+# set up trainer entry point
+ENTRYPOINT ["python3", "-m", "tool_use.sac.train"]
