@@ -351,12 +351,10 @@ class Algorithm:
             (transitions, indices), batch_size=self.params.batch_size
         )
         for batch, indices in dataset:
-            with pynr.debugging.Stopwatch() as train_stopwatch:
-                td_errors = self._train_batch(batch)
-            tf.print("_train_batch", train_stopwatch.duration)
-            batch["priorities"] = tf.abs(td_errors)
+            td_errors = self._train_batch(batch)
 
             # update priorities
+            batch["priorities"] = tf.abs(td_errors)
             self.buffer.update(indices, batch)
 
     def _train(self, it):
@@ -457,9 +455,9 @@ class Algorithm:
 
     def _train_iter(self, it):
         # train
+        tf.print("train", it)
         with pynr.debugging.Stopwatch() as train_stopwatch:
             self._train(it)
-        tf.print("_train", train_stopwatch.duration)
 
         with self.job.summary_context("train"):
             tf.summary.scalar(
@@ -469,16 +467,17 @@ class Algorithm:
             )
 
         # eval
-        with pynr.debugging.Stopwatch() as eval_stopwatch:
-            self._eval()
-        tf.print("_eval", eval_stopwatch.duration)
+        if it % self.params.eval_interval == 0:
+            tf.print("eval", it)
+            with pynr.debugging.Stopwatch() as eval_stopwatch:
+                self._eval()
 
-        with self.job.summary_context("eval"):
-            tf.summary.scalar(
-                "time/eval",
-                eval_stopwatch.duration,
-                step=self.actor_optimizer.iterations,
-            )
+            with self.job.summary_context("eval"):
+                tf.summary.scalar(
+                    "time/eval",
+                    eval_stopwatch.duration,
+                    step=self.actor_optimizer.iterations,
+                )
 
         self.job.save(checkpoint_number=it)
         self.job.flush_summaries()
@@ -503,8 +502,6 @@ class Algorithm:
 
         # begin training iterations
         for it in range(1, self.params.train_iters + 1):
-            tf.print("iteration:", it - 1)
-
             self._train_iter(it)
 
             # flush each iteration

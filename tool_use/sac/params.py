@@ -11,12 +11,13 @@ class HyperParams:
     discount_factor = attr.ib(default=0.99, type=float)
 
     # training
-    train_iters = attr.ib(default=100, type=int)
+    train_iters = attr.ib(default=1000, type=int)
     episodes_max = attr.ib(default=int(1e4), type=int)
-    episodes_train = attr.ib(default=8, type=int)
-    episodes_train_sample = attr.ib(default=1024, type=int)
+    episodes_train = attr.ib(default=1, type=int)
+    episodes_train_sample = attr.ib(default=128, type=int)
     episodes_eval = attr.ib(default=128, type=int)
     episodes_init = attr.ib(default=1024, type=int)
+    eval_interval = attr.ib(default=100, type=int)
 
     # optimization
     learning_rate = attr.ib(default=3e-4, type=float)

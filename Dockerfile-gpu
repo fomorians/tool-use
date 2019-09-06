@@ -1,4 +1,4 @@
-FROM nvidia/cuda:9.0-cudnn7-runtime
+FROM nvidia/cuda:10.0-cudnn7-runtime
 
 # install dependencies
 RUN apt-get update && \

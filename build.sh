@@ -20,5 +20,3 @@ cp $GYM_TOOL_USE_PACKAGE $PACKAGES_DIR
 cp $PYONEER_PACKAGE $PACKAGES_DIR
 
 docker build -f Dockerfile-gpu -t $IMAGE_URI .
-# docker run --runtime=nvidia $IMAGE_URI --epochs 1
-# docker push $IMAGE_URI
