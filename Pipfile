@@ -11,7 +11,8 @@ pycolab = "*"
 gym-pycolab = "*"
 gym-tool-use = "*"
 tensorflow = "==2.0.0-beta1"
-tfp-nightly = "*"
+tensorflow_probability = "==0.8.0-rc0"
+gast = "==0.2.2"
 
 [dev-packages]
 jupyterlab = "*"
