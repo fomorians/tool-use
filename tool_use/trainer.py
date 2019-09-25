@@ -33,10 +33,10 @@ class Trainer:
         self.inference_policy = pyrl.strategies.Mode(self.model)
 
         # normalization
-        self.extrinsic_rewards_moments = pynr.nn.ExponentialMovingMoments(
+        self.extrinsic_rewards_moments = pynr.moments.ExponentialMovingMoments(
             shape=(), rate=self.params.reward_decay
         )
-        self.intrinsic_rewards_moments = pynr.nn.ExponentialMovingMoments(
+        self.intrinsic_rewards_moments = pynr.moments.ExponentialMovingMoments(
             shape=(), rate=self.params.reward_decay
         )
 
@@ -75,7 +75,7 @@ class Trainer:
             lambda_factor=self.params.lambda_factor,
             normalize=self.params.normalize_advantages,
         )
-        self.returns_fn = pyrl.targets.DiscountedRewards(
+        self.returns_fn = pyrl.targets.DiscountedReturns(
             discount_factor=self.params.discount_factor
         )
 
